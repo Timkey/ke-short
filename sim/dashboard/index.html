@@ -11,7 +11,7 @@
   No fetch(), no CORS — works on file://, GitHub Pages, any static host.
   To regenerate data:  cd sim && docker compose run --rm engine
 -->
-<script src="./data/bundle.js?v=5" onerror="window.__BUNDLE_MISSING=true"></script>
+<script src="./data/bundle.js?v=6" onerror="window.__BUNDLE_MISSING=true"></script>
 <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
 <style>
 :root{
@@ -274,7 +274,7 @@ tr:hover td{background:var(--s2)}
 </main>
 
 <script>
-(function boot(){
+function boot(){
   var badge=document.getElementById("status");
   if(window.__BUNDLE_MISSING||typeof window.SIM_DATA==="undefined"){
     badge.className="badge b-err";badge.textContent="Data not found";
@@ -299,7 +299,7 @@ tr:hover td{background:var(--s2)}
     });
   });
   render(D);
-})();
+}
 
 var PL=function(o){
   o=o||{};
@@ -659,6 +659,7 @@ function calcStress(D){
     {type:"bar",name:"FIC Retained",x:tr.map(function(t){return "Class "+t.key;}),y:tr.map(function(t){return t.fic_ret;}),marker:{color:"#58a6ff"}}],
     PL({barmode:"stack",yaxis:{title:"FX Profit Split (£)"},showlegend:true}),PC);
 }
+boot();
 </script>
 </body>
 </html>
