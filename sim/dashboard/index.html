@@ -11,7 +11,7 @@
   No fetch(), no CORS — works on file://, GitHub Pages, any static host.
   To regenerate data:  cd sim && docker compose run --rm engine
 -->
-<script src="./data/bundle.js?v=4" onerror="window.__BUNDLE_MISSING=true"></script>
+<script src="./data/bundle.js?v=5" onerror="window.__BUNDLE_MISSING=true"></script>
 <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
 <style>
 :root{
@@ -332,18 +332,23 @@ function render(D){
 
 /* ── OVERVIEW ── */
 function renderOverview(D){
-  var mc=D.mc_aggregated||{},cf=mc.counterfactual_summary||{},ts=mc.trigger_stats||{},pt=mc.pareto_frontier||[];
+  var mc=(D&&D.mc_aggregated)||{};
+  var cf=mc.counterfactual_summary||{};
+  var ts=mc.trigger_stats||{};
+  var pt=mc.pareto_frontier||[];
+  var ta=ts.class_a||{},tb=ts.class_b||{},tc=ts.class_c||{};
   document.getElementById("mc-n-paths").textContent=(mc.n_paths||10000).toLocaleString();
   var uplift=(cf.spv_class_b_mean_gbp&&cf.hold_in_kenya_mean_gbp)?
     ((cf.spv_class_b_mean_gbp-cf.hold_in_kenya_mean_gbp)/cf.hold_in_kenya_mean_gbp*100).toFixed(1):"--";
   document.getElementById("kpi-row").innerHTML=[
     {l:"Total Raise",big:"70M KES",sub:"≈ "+fGBP(cf.initial_gbp_value)+" at inception"},
-    {l:"Class B Trigger",big:fPct((ts.class_b||{}).probability_pct),sub:"35% devaluation (£1 ≈ 256 KES)"},
-    {l:"Class C Trigger",big:fPct((ts.class_c||{}).probability_pct),sub:"50% devaluation (£1 ≈ 333 KES)"},
+    {l:"Class B Trigger",big:fPct(tb.probability_pct),sub:"35% devaluation (£1 ≈ 256 KES)"},
+    {l:"Class C Trigger",big:fPct(tc.probability_pct),sub:"50% devaluation (£1 ≈ 333 KES)"},
     {l:"SPV vs Hold-Kenya",big:uplift+"%",sub:"Class B mean exit vs hold-KES"}
   ].map(function(d){return '<div class="card"><h3>'+d.l+'</h3><div class="big">'+d.big+'</div><div class="sub">'+d.sub+'</div></div>';}).join("");
+  var tsByKey={class_a:ta,class_b:tb,class_c:tc};
   document.getElementById("trigger-prob-row").innerHTML=["class_a","class_b","class_c"].map(function(cls){
-    var t=ts[cls]||{},col=CLS_COLORS[cls];
+    var t=tsByKey[cls],col=CLS_COLORS[cls];
     return '<div class="card" style="border-top:3px solid '+col+'"><h3>'+t.label+'</h3><div class="big" style="color:'+col+'">'+fPct(t.probability_pct)+'</div>'
       +'<div class="sub" style="margin-top:8px">'+kv("Triggered",(t.triggered_count||0).toLocaleString())+kv("Median month",t.median_trigger_month||"--")+kv("P25-P75",(t.p25_trigger_month||"--")+"-"+(t.p75_trigger_month||"--")+" mo")+'</div></div>';
   }).join("");
