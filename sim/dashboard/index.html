@@ -583,7 +583,7 @@ function renderStress(D){
     var v=stressVals[def.key];
     return '<div class="ctrl"><label>'+def.label+'<span id="sv-'+def.key+'">'+v+def.unit+'</span></label>'
       +'<input type="range" id="sl-'+def.key+'" min="'+def.min+'" max="'+def.max+'" step="'+def.step+'" value="'+v+'" '
-      +'oninput="stressVals[''+def.key+'']=+this.value;document.getElementById('sv-'+def.key+'').textContent=this.value+''+def.unit+''">'
+      +'oninput="stressVals[\''+def.key+'\']=+this.value;document.getElementById(\'sv-'+def.key+'\').textContent=this.value+\''+def.unit+'\'">'
       +"</div>";
   }).join("");
   document.getElementById("stress-run").onclick=function(){calcStress(D);};
