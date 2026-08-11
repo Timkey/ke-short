@@ -11,7 +11,7 @@
   No fetch(), no CORS — works on file://, GitHub Pages, any static host.
   To regenerate data:  cd sim && docker compose run --rm engine
 -->
-<script src="./data/bundle.js?v=6" onerror="window.__BUNDLE_MISSING=true"></script>
+<script src="./data/bundle.js?v=7" onerror="window.__BUNDLE_MISSING=true"></script>
 <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
 <style>
 :root{
@@ -303,19 +303,20 @@ function boot(){
 
 var PL=function(o){
   o=o||{};
-  return {
+  var layout={
     paper_bgcolor:"rgba(0,0,0,0)",plot_bgcolor:"rgba(0,0,0,0)",
     font:{color:"#8b949e",size:11},
     xaxis:Object.assign({gridcolor:"#21262d",linecolor:"#30363d",zerolinecolor:"#30363d"},o.xaxis||{}),
     yaxis:Object.assign({gridcolor:"#21262d",linecolor:"#30363d",zerolinecolor:"#30363d"},o.yaxis||{}),
-    yaxis2:o.yaxis2||undefined,
     legend:{bgcolor:"rgba(0,0,0,0)",bordercolor:"#30363d",borderwidth:1},
-    margin:{t:20,r:20,b:50,l:60},
-    barmode:o.barmode||undefined,
-    showlegend:o.showlegend,
-    shapes:o.shapes||undefined,
-    annotations:o.annotations||undefined
+    margin:{t:20,r:20,b:50,l:60}
   };
+  if(o.yaxis2)layout.yaxis2=o.yaxis2;
+  if(o.barmode)layout.barmode=o.barmode;
+  if(o.showlegend!=null)layout.showlegend=o.showlegend;
+  if(o.shapes)layout.shapes=o.shapes;
+  if(o.annotations)layout.annotations=o.annotations;
+  return layout;
 };
 var PC={responsive:true,displayModeBar:false};
 function fGBP(v){return v==null?"--":"£"+Math.round(v).toLocaleString();}
