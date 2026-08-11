@@ -324,7 +324,7 @@ function render(D){
 
 /* ── OVERVIEW ── */
 function renderOverview(D){
-  var mc=D.mc_aggregated,cf=mc.counterfactual_summary,ts=mc.trigger_stats,pt=mc.pareto_frontier;
+  var mc=D.mc_aggregated||{},cf=mc.counterfactual_summary||{},ts=mc.trigger_stats||{},pt=mc.pareto_frontier||[];
   document.getElementById("mc-n-paths").textContent=(mc.n_paths||10000).toLocaleString();
   var uplift=(cf.spv_class_b_mean_gbp&&cf.hold_in_kenya_mean_gbp)?
     ((cf.spv_class_b_mean_gbp-cf.hold_in_kenya_mean_gbp)/cf.hold_in_kenya_mean_gbp*100).toFixed(1):"--";
@@ -407,7 +407,7 @@ function drawScenario(ledger){
 
 /* ── MONTE CARLO ── */
 function renderMC(D){
-  var ts=D.mc_aggregated.trigger_stats;
+  var ts=(D.mc_aggregated||{}).trigger_stats||{};
   document.getElementById("mc-stats-row").innerHTML=["class_a","class_b","class_c"].map(function(cls){
     var t=ts[cls],col=CLS_COLORS[cls];
     return '<div class="card" style="border-left:3px solid '+col+'"><h3>'+t.label+'</h3><div class="big" style="color:'+col+'">'+fPct(t.probability_pct)+'</div>'
@@ -426,7 +426,7 @@ function renderMC(D){
 
 /* ── PARETO ── */
 function renderPareto(D){
-  var scatter=D.mc_aggregated.irr_scatter_sample||[],pt=D.mc_aggregated.pareto_frontier,byClass={};
+  var mc=D.mc_aggregated||{},scatter=mc.irr_scatter_sample||[],pt=mc.pareto_frontier||[],byClass={};
   scatter.forEach(function(d){if(!byClass[d["class"]])byClass[d["class"]]={x:[],y:[]};byClass[d["class"]].x.push(d.domestic_bond_yield_pct);byClass[d["class"]].y.push(d.irr_pct);});
   var clsCols={"Class B":"#58a6ff","Class C":"#bc8cff","Class_b":"#58a6ff","Class_c":"#bc8cff"};
   var traces=Object.entries(byClass).map(function(e){return {type:"scatter",mode:"markers",name:e[0],x:e[1].x,y:e[1].y,marker:{color:clsCols[e[0]]||"#58a6ff",size:4,opacity:0.35}};});
@@ -438,7 +438,7 @@ function renderPareto(D){
 
 /* ── IRR DISTRIBUTION ── */
 function renderIRR(D){
-  var hists=D.mc_aggregated.irr_histograms;
+  var hists=(D.mc_aggregated||{}).irr_histograms||{};
   [["class_b","b","#58a6ff"],["class_c","c","#bc8cff"]].forEach(function(arr){
     var cls=arr[0],suf=arr[1],col=arr[2],h=hists[cls];if(!h)return;
     Plotly.newPlot("ch-irr-"+suf,[{x:h.bins,y:h.counts,type:"bar",marker:{color:col,opacity:0.8}}],
@@ -455,7 +455,7 @@ function renderIRR(D){
 
 /* ── CAPITAL FLIGHT ── */
 function renderCapitalFlight(D){
-  var cf=D.mc_aggregated.counterfactual_summary;
+  var cf=(D.mc_aggregated||{}).counterfactual_summary||{};
   var uplift=(cf.spv_class_b_mean_gbp&&cf.hold_in_kenya_mean_gbp)?
     ((cf.spv_class_b_mean_gbp-cf.hold_in_kenya_mean_gbp)/cf.hold_in_kenya_mean_gbp*100).toFixed(1):"--";
   document.getElementById("cf-kpis").innerHTML=[
