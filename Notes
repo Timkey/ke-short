@@ -1,0 +1,5 @@
+using only docker to write , setup and or execute script using docker compose preferrably.
+We need to review the premise of the idea referenced in the white paper alongside other supporting literature, all of which needs to be reviewed.
+Once the core concept aka facts are determined, we ought to run tests on all assumptions.
+The data will then be used to build an interactive model to show the actual feasible outcomes of executing the play, assuming we can confirm the premise is fully feasible first.
+The dashboard needs to be a static one based on prepared datasets since there will be no server to serve live.
