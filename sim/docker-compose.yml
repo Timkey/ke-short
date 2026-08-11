@@ -1,14 +1,16 @@
 # ─────────────────────────────────────────────────────────────────────────────
 # Synthetic Sovereign Hedge — Simulation Stack
 #
-# Services:
-#   engine    → Python Monte Carlo engine. Runs once, writes JSON to /data.
-#   dashboard → nginx serving the static HTML dashboard + /data/ JSON files.
+# The engine runs inside Docker (no host installs needed) and writes
+# dashboard/data/bundle.js — all simulation datasets embedded as JS globals.
+# The dashboard is a single index.html that works on:
+#   • file://  (open locally, no server required)
+#   • GitHub Pages / any static host
 #
 # Usage:
-#   docker compose up --build          # build & run (engine → dashboard)
-#   docker compose up dashboard        # serve dashboard only (after engine ran)
-#   docker compose run engine          # re-run engine to regenerate datasets
+#   docker compose run --rm engine        # regenerate datasets → bundle.js
+#   open sim/dashboard/index.html         # view locally
+#   git push → GitHub Pages serves it    # deploy
 # ─────────────────────────────────────────────────────────────────────────────
 
 services:
@@ -18,25 +20,7 @@ services:
       context: ./engine
       dockerfile: Dockerfile
     container_name: spv-engine
+    # Mount dashboard/data directly so bundle.js lands next to index.html
     volumes:
-      - sim-data:/data
+      - ./dashboard/data:/data
     restart: "no"
-    # Engine runs once and exits. dashboard waits for it to finish first.
-
-  dashboard:
-    build:
-      context: ./dashboard
-      dockerfile: Dockerfile
-    container_name: spv-dashboard
-    volumes:
-      - sim-data:/data:ro          # read-only: dashboard only serves data
-    ports:
-      - "8080:8080"
-    depends_on:
-      engine:
-        condition: service_completed_successfully
-    restart: unless-stopped
-
-volumes:
-  sim-data:
-    driver: local

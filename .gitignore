@@ -1,0 +1,11 @@
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Generated simulation data (produced by Docker engine at build time)
+sim/dashboard/data/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
