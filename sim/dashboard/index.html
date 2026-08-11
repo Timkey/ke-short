@@ -11,7 +11,7 @@
   No fetch(), no CORS — works on file://, GitHub Pages, any static host.
   To regenerate data:  cd sim && docker compose run --rm engine
 -->
-<script src="./data/bundle.js?v=3" onerror="window.__BUNDLE_MISSING=true"></script>
+<script src="./data/bundle.js?v=4" onerror="window.__BUNDLE_MISSING=true"></script>
 <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
 <style>
 :root{
@@ -281,6 +281,12 @@ tr:hover td{background:var(--s2)}
     document.getElementById("fallback").style.display="block";return;
   }
   var D=window.SIM_DATA;
+  if(!D.mc_aggregated||!D.mc_aggregated.trigger_stats){
+    badge.className="badge b-warn";badge.textContent="Stale data — re-run Docker engine";
+    document.getElementById("fallback").style.display="block";
+    document.querySelector(".fallback-box p").textContent="Cached bundle is outdated (missing mc_aggregated). Run the engine again:";
+    return;
+  }
   badge.className="badge b-ok";
   badge.textContent=((D.mc_aggregated.n_paths||10000)).toLocaleString()+" paths · "+(D.generated_at||"");
   document.getElementById("main-content").style.display="block";
