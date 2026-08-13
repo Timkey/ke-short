@@ -1747,6 +1747,30 @@ def main():
     print("Building yield benchmarks …")
     yield_benchmarks = build_yield_benchmarks(p)
 
+    # Inject MC-derived SPV IRRs into yield_benchmarks so the bundle is self-contained.
+    # pareto_frontier has mean/P10/P90 IRR per class from the full 10k-path simulation.
+    # class field is e.g. "Class A (25% drop)" — match by prefix.
+    pf_entries = aggregated.get("pareto_frontier", [])
+    spv_irr_reference = []
+    for cls_key, label in [("class_a", "Class A"), ("class_b", "Class B"), ("class_c", "Class C")]:
+        entry = next((e for e in pf_entries if e["class"].startswith(label)), None)
+        if entry:
+            spv_irr_reference.append({
+                "class": label,
+                "cls_key": cls_key,
+                "trigger_drop_pct": entry["trigger_drop_pct"],
+                "mean_irr_pct": entry["mean_irr_pct"],
+                "p10_irr_pct": entry["p10_irr_pct"],
+                "p90_irr_pct": entry["p90_irr_pct"],
+                "median_duration_months": entry["median_duration_months"],
+                # Bond GBP-equiv on same class trigger path, for direct comparison
+                "bond_gbp_equiv_at_trigger_pct": round(
+                    ((1 + p["kenya_bond_yield_base"]) *
+                     (1 / (1 + p[cls_key]["trigger_drop"])) ** (12 / entry["median_duration_months"]) - 1) * 100, 2
+                ) if entry["median_duration_months"] else None,
+            })
+    yield_benchmarks["spv_irr_reference"] = spv_irr_reference
+
     # ── Kenya FX forecast / fan chart (Module 3) ─────────────────────────────
     print("Building Kenya FX forecast fan chart …")
     kenya_forecast = build_kenya_forecast(p, n_months=120)
