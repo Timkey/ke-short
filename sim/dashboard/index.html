@@ -755,9 +755,25 @@ function calcStress(D){
     });
     return {x:months,y:ys,type:"scatter",mode:"lines",name:"Class "+t.key,line:{color:t.col,width:2}};
   });
-  var bondYieldPct2=(stressD&&stressD.params&&stressD.params.kenya_bond_yield_base||0.16)*100;
-  irrCurves.push({type:"scatter",mode:"lines",x:[0,120],y:[bondYieldPct2,bondYieldPct2],name:"KE Bond "+bondYieldPct2+"%",line:{color:"#f85149",width:1,dash:"dash"}});
-  Plotly.newPlot("ch-stress-irr-curve",irrCurves,PL({xaxis:{title:"Month of Trigger"},yaxis:{title:"Annual GBP IRR (%)"},showlegend:true}),PC);
+  // Bond GBP-equivalent is NOT a flat 16% KES line — it varies with trigger month.
+  // If crisis hits in month 12 (fast): annualised FX loss dominates → bond deeply negative in GBP.
+  // If crisis hits in month 60 (slow): same total drop spread over more years → bond GBP-equiv improves.
+  // Formula: (1 + kes_rate) * (e0/et)^(12/mo) - 1  — same realised FX path as SPV.
+  var kesRate=(stressD&&stressD.params&&stressD.params.kenya_bond_yield_base)||0.16;
+  tr.forEach(function(t){
+    var et=e0*(1+t.trig);
+    var bondCurve=months.map(function(mo){
+      return ((1+kesRate)*Math.pow(e0/et,12/mo)-1)*100;
+    });
+    irrCurves.push({x:months,y:bondCurve,type:"scatter",mode:"lines",
+      name:"Bond GBP equiv (Class "+t.key+")",
+      line:{color:t.col,width:1,dash:"dot"},opacity:0.6,showlegend:true});
+  });
+  Plotly.newPlot("ch-stress-irr-curve",irrCurves,PL({xaxis:{title:"Month of Trigger"},yaxis:{title:"Annual GBP IRR (%)"},
+    annotations:[{xref:"paper",yref:"paper",x:0.01,y:0.01,
+      text:"Dotted = bond GBP-equiv on same path (not flat 16% KES nominal)",
+      showarrow:false,font:{color:"#8b949e",size:10},xanchor:"left",yanchor:"bottom"}],
+    showlegend:true}),PC);
   Plotly.newPlot("ch-stress-split",[
     {type:"bar",name:"Investor Sweetener",x:tr.map(function(t){return "Class "+t.key;}),y:tr.map(function(t){return t.sfx;}),marker:{color:"#3fb950"}},
     {type:"bar",name:"FIC Retained",x:tr.map(function(t){return "Class "+t.key;}),y:tr.map(function(t){return t.fic_ret;}),marker:{color:"#58a6ff"}}],

@@ -1408,23 +1408,27 @@ def run_assumption_tests(params: dict) -> list[dict]:
     invest_gbp = tranche_kes / e0
     monthly_irr_b = irr([-invest_gbp] + [0.0] * (t_b - 1) + [payout_b["total_payout_gbp"]])
     annual_irr_b = (1 + monthly_irr_b) ** 12 - 1 if not np.isnan(monthly_irr_b) else float("nan")
-    # NOTE: GBP IRR is expected to be below 16% KES bond rate because the investor
-    # suffers the FX loss on principal. The real value of this structure is capital
-    # flight to hard currency, not nominal yield enhancement.
+    # Correct benchmark: what does a 16% KES bond return IN GBP over the same
+    # trigger path? Formula: (1 + kes_rate) * (e0/et)^(12/t) - 1
+    # At Class B (45% drop over 36mo): ~+2.5% GBP/yr (barely positive).
+    # At 16% KES nominal the bond looks great; in GBP it barely breaks even.
+    bond_gbp_irr_b = (1 + params["kenya_bond_yield_base"]) * (e0 / et_b) ** (12 / t_b) - 1
     tests.append({
         "id": "T3",
-        "name": "Class B GBP IRR vs Kenyan bond yield benchmark",
-        "assumption": "White paper claims yield parity with 16% domestic bonds. A fail indicates FX loss on principal dominates — "
-                      "structure is capital-preservation play, not yield play.",
+        "name": "Class B GBP IRR vs bond GBP-equivalent return (same trigger path)",
+        "assumption": "Comparison must be GBP-to-GBP: the 16% KES bond, after 45% FX depreciation over 36mo, "
+                      "yields only ~+2-3% GBP/yr. A pass means SPV outperforms the KES bond in GBP terms. "
+                      "A fail means the bond still wins GBP-for-GBP — not that SPV fails vs 16% nominal.",
         "values": {
             "invest_gbp": round(invest_gbp, 2),
             "total_received_gbp": round(payout_b["total_payout_gbp"], 2),
             "principal_at_crash_gbp": round(payout_b["principal_gbp_crash_rate"], 2),
             "yield_only_gbp": round(payout_b["yield_only_gbp"], 2),
             "annual_irr_gbp_pct": round(annual_irr_b * 100, 2) if not np.isnan(annual_irr_b) else "NaN",
-            "target_yield_pct": params["kenya_bond_yield_base"] * 100,
+            "kes_nominal_yield_pct": params["kenya_bond_yield_base"] * 100,          # informational only
+            "bond_gbp_equiv_pct": round(bond_gbp_irr_b * 100, 2),                   # correct GBP benchmark
         },
-        "pass": not np.isnan(annual_irr_b) and annual_irr_b >= params["kenya_bond_yield_base"],
+        "pass": not np.isnan(annual_irr_b) and annual_irr_b >= bond_gbp_irr_b,
     })
 
     # ── T4: FX Profit is substantial ─────────────────────────────────────────
