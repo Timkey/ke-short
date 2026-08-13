@@ -39,6 +39,12 @@ main{padding:24px 28px;max-width:1440px;margin:0 auto}
 .g2{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:18px}
 .g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:18px;margin-bottom:18px}
 .g4{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:22px}
+.chart-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px;margin-bottom:18px}
+.chart-box{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px}
+.chart-box h3{margin:0 0 10px;font-size:12px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
+.data-table{width:100%;border-collapse:collapse;font-size:12px}
+.data-table th{background:#161b22;padding:8px 12px;text-align:left;color:var(--muted);border-bottom:1px solid var(--border);white-space:nowrap}
+.data-table td{padding:7px 12px;border-bottom:1px solid #21262d;color:#c9d1d9}
 .card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:18px}
 .card h3{font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:10px}
 .card .big{font-size:26px;font-weight:700;line-height:1}
@@ -102,6 +108,10 @@ tr:hover td{background:var(--s2)}
   <button data-tab="calibration">Historical Calibration</button>
   <button data-tab="syndicate">Syndicate Planner</button>
   <button data-tab="stress">Stress Test</button>
+  <button data-tab="risk-scorecard">Risk Scorecard</button>
+  <button data-tab="yield-benchmarks">Yield Benchmarks</button>
+  <button data-tab="fx-forecast">FX Forecast</button>
+  <button data-tab="tranche-spacing">Tranche Spacing</button>
 </nav>
 
 <div id="fallback">
@@ -271,6 +281,55 @@ tr:hover td{background:var(--s2)}
   </div>
 </div>
 
+
+<!-- RISK SCORECARD -->
+<div class="tab" id="tab-risk-scorecard">
+  <h2>Structural Risk Scorecard</h2>
+  <p style="color:#8b949e;max-width:700px">Six IMF macro-financial indicators benchmarked across Kenya and four historical EM crisis peers. Higher score = higher risk.</p>
+  <div id="risk-commentary" style="color:#8b949e;margin:10px 0 20px;max-width:760px;font-size:13px"></div>
+  <div class="chart-grid">
+    <div class="chart-box" style="grid-column:span 2"><h3>Composite Risk Score by Country</h3><div id="ch-risk-composite" style="height:320px"></div></div>
+    <div class="chart-box" style="grid-column:span 2"><h3>Factor Risk Heatmap</h3><div id="ch-risk-heatmap" style="height:300px"></div></div>
+    <div class="chart-box" style="grid-column:span 2"><h3>Structural Similarity to Kenya Baseline (%)</h3><div id="ch-risk-similarity" style="height:260px"></div></div>
+  </div>
+  <div id="risk-table" style="margin-top:16px;overflow-x:auto"></div>
+</div>
+
+<!-- YIELD BENCHMARKS -->
+<div class="tab" id="tab-yield-benchmarks">
+  <h2>Yield Benchmarks &amp; Opportunity Cost</h2>
+  <p style="color:#8b949e;max-width:700px">Kenya domestic yield curve vs UK comparators. SPV tranches must deliver superior GBP-equivalent returns to justify EM currency risk.</p>
+  <div id="yield-commentary" style="color:#8b949e;margin:10px 0 20px;max-width:760px;font-size:13px"></div>
+  <div class="chart-grid">
+    <div class="chart-box" style="grid-column:span 2"><h3>GBP-Equivalent Yield Comparison</h3><div id="ch-yield-compare" style="height:320px"></div></div>
+    <div class="chart-box"><h3>Kenya Domestic Yield Curve (KES)</h3><div id="ch-yield-curve" style="height:280px"></div></div>
+    <div class="chart-box"><h3>Trigger Breakeven Rates</h3><div id="ch-yield-breakeven" style="height:280px"></div></div>
+  </div>
+</div>
+
+<!-- FX FORECAST -->
+<div class="tab" id="tab-fx-forecast">
+  <h2>Kenya FX Depreciation Forecast</h2>
+  <p style="color:#8b949e;max-width:700px">10-year KES/GBP depreciation cone (5,000 GBM+jump paths). Shaded bands show P5&ndash;P95 probability ranges. Dotted lines mark SPV trigger thresholds.</p>
+  <div class="chart-grid">
+    <div class="chart-box" style="grid-column:span 2"><h3>Depreciation Fan Chart (KES/GBP)</h3><div id="ch-forecast-fan" style="height:400px"></div></div>
+    <div class="chart-box"><h3>Cumulative Trigger Probability (%)</h3><div id="ch-forecast-probs" style="height:280px"></div></div>
+    <div class="chart-box"><h3>Early Warning Signal (6-month horizon)</h3><div id="ch-forecast-ew" style="height:280px"></div></div>
+  </div>
+</div>
+
+<!-- TRANCHE SPACING -->
+<div class="tab" id="tab-tranche-spacing">
+  <h2>Tranche Spacing Analysis</h2>
+  <p style="color:#8b949e;max-width:700px">Do the trigger levels provide adequate sequencing? Analyses the gap in months between consecutive class trigger events across all MC paths.</p>
+  <div id="spacing-verdict" style="margin:12px 0 20px"></div>
+  <div class="chart-grid">
+    <div class="chart-box"><h3>Class A &rarr; B Gap: % paths within N months</h3><div id="ch-spacing-ab" style="height:280px"></div></div>
+    <div class="chart-box"><h3>Class B &rarr; C Gap: % paths within N months</h3><div id="ch-spacing-bc" style="height:280px"></div></div>
+    <div class="chart-box" style="grid-column:span 2"><h3>Trigger Gap Quartiles by Tranche Pair</h3><div id="ch-spacing-probs" style="height:260px"></div></div>
+  </div>
+</div>
+
 </main>
 
 <script>
@@ -329,6 +388,8 @@ function render(D){
   renderMC(D);renderPareto(D);renderIRR(D);
   renderCapitalFlight(D);renderFXPaths(D);
   renderCalibration(D);renderSyndicate(D);renderStress(D);
+  renderRiskScorecard(D);renderYieldBenchmarks(D);
+  renderFXForecast(D);renderTrancheSpacing(D);
 }
 
 /* ── OVERVIEW ── */
@@ -673,6 +734,147 @@ function calcStress(D){
     {type:"bar",name:"FIC Retained",x:tr.map(function(t){return "Class "+t.key;}),y:tr.map(function(t){return t.fic_ret;}),marker:{color:"#58a6ff"}}],
     PL({barmode:"stack",yaxis:{title:"FX Profit Split (£)"},showlegend:true}),PC);
 }
+
+function renderRiskScorecard(D){
+  var sr=D.structural_risk;
+  if(!sr)return;
+  document.getElementById("risk-commentary").textContent=sr.commentary||"";
+  var ckeys=Object.keys(sr.countries);
+  var labels=ckeys.map(function(k){return sr.countries[k].label;});
+  var scores=ckeys.map(function(k){return sr.countries[k].composite_risk_score;});
+  var colors=ckeys.map(function(k){return sr.countries[k].color;});
+  Plotly.newPlot("ch-risk-composite",[{type:"bar",orientation:"h",x:scores,y:labels,
+    marker:{color:colors},text:scores.map(function(s){return s.toFixed(1);}),textposition:"auto"}],
+    PL({xaxis:{title:"Composite Risk Score (0–100)",range:[0,100]},showlegend:false,margin:{l:200,r:20,t:10,b:40}}),PC);
+  var fKeys=sr.factor_keys,fLabels=sr.factor_labels;
+  var zVals=ckeys.map(function(k){return fKeys.map(function(f){return sr.countries[k].risk_scores[f];});});
+  Plotly.newPlot("ch-risk-heatmap",[{type:"heatmap",z:zVals,x:fLabels,y:labels,
+    colorscale:[[0,"#1e3a1e"],[0.5,"#d29922"],[1,"#f85149"]],showscale:true,
+    text:zVals.map(function(r){return r.map(function(v){return v.toFixed(0);});}),texttemplate:"%{text}",
+    colorbar:{tickfont:{color:"#8b949e"}}}],
+    PL({margin:{l:200,r:60,t:10,b:100}}),PC);
+  var sims=ckeys.map(function(k){return sr.countries[k].similarity_pct;});
+  Plotly.newPlot("ch-risk-similarity",[{type:"bar",x:labels,y:sims,marker:{color:colors},
+    text:sims.map(function(s){return s+"%";}),textposition:"auto"}],
+    PL({yaxis:{title:"Structural Similarity to Kenya (%)"},showlegend:false}),PC);
+  var cols=["Country","Debt/GDP","FX Reserves","Curr. Acct","Fiscal Def.","Inflation","Policy Rate","IMF Program","Composite"];
+  var rows=ckeys.map(function(k){
+    var c=sr.countries[k],r=c.raw;
+    return [c.label,r.debt_gdp_pct+"%",r.reserves_months_imports+"mo",r.current_account_gdp_pct+"%",
+      r.fiscal_deficit_gdp_pct+"%",r.inflation_pct+"%",c.cbk_policy_rate_pct+"%",c.imf_program,c.composite_risk_score.toFixed(1)];
+  });
+  document.getElementById("risk-table").innerHTML="<table class='data-table'><thead><tr>"
+    +cols.map(function(c){return"<th>"+c+"</th>";}).join("")+"</tr></thead><tbody>"
+    +rows.map(function(row){return"<tr>"+row.map(function(v){return"<td>"+v+"</td>";}).join("")+"</tr>";}).join("")
+    +"</tbody></table>";
+}
+
+function renderYieldBenchmarks(D){
+  var yb=D.yield_benchmarks;
+  if(!yb)return;
+  document.getElementById("yield-commentary").textContent=yb.commentary||"";
+  var bm=yb.benchmarks||[];
+  Plotly.newPlot("ch-yield-compare",[{type:"bar",orientation:"h",
+    x:bm.map(function(b){return b.yield_pct;}),
+    y:bm.map(function(b){return b.name;}),
+    marker:{color:bm.map(function(b){return b.color;})},
+    text:bm.map(function(b){return b.yield_pct.toFixed(1)+"%";}),textposition:"auto",
+    customdata:bm.map(function(b){return b.risk;}),
+    hovertemplate:"%{y}: %{x}%<br>%{customdata}<extra></extra>"}],
+    PL({xaxis:{title:"Yield / GBP-equiv. IRR (%)"},showlegend:false,margin:{l:220,r:20,t:10,b:40}}),PC);
+  var kc=yb.kenya_yield_curve||[];
+  Plotly.newPlot("ch-yield-curve",[{type:"scatter",mode:"lines+markers",
+    x:kc.map(function(p){return p.tenor;}),y:kc.map(function(p){return p.yield_pct;}),
+    line:{color:"#3fb950",width:2},marker:{size:6,color:"#3fb950"}}],
+    PL({yaxis:{title:"Yield (%)"},showlegend:false}),PC);
+  var be=yb.breakeven_analysis||{},p=D.params||{},spot=p.kes_gbp_initial_spot||166.6;
+  Plotly.newPlot("ch-yield-breakeven",[{type:"bar",
+    x:["Current Spot","Class B Breakeven","Class C Breakeven"],
+    y:[spot,be.class_b_breakeven_rate||0,be.class_c_breakeven_rate||0],
+    marker:{color:["#3fb950","#58a6ff","#bc8cff"]},
+    text:[spot+"",(be.class_b_breakeven_rate||"?")+"",(be.class_c_breakeven_rate||"?")+""],
+    textposition:"auto"}],
+    PL({yaxis:{title:"KES/GBP Rate"},showlegend:false}),PC);
+}
+
+function renderFXForecast(D){
+  var fc=D.kenya_forecast;
+  if(!fc)return;
+  var months=fc.months,bands=fc.bands,triggers=fc.trigger_rates;
+  var ccols={class_a:"#ffa657",class_b:"#58a6ff",class_c:"#bc8cff"};
+  var traces=[
+    {x:months,y:bands.p95,type:"scatter",mode:"lines",showlegend:false,line:{color:"rgba(248,81,73,0.15)",width:0}},
+    {x:months,y:bands.p5,type:"scatter",mode:"lines",name:"P5-P95",fill:"tonexty",fillcolor:"rgba(248,81,73,0.08)",line:{color:"rgba(248,81,73,0.15)",width:0}},
+    {x:months,y:bands.p90,type:"scatter",mode:"lines",showlegend:false,line:{color:"rgba(210,153,34,0.2)",width:0}},
+    {x:months,y:bands.p10,type:"scatter",mode:"lines",name:"P10-P90",fill:"tonexty",fillcolor:"rgba(210,153,34,0.12)",line:{color:"rgba(210,153,34,0.2)",width:0}},
+    {x:months,y:bands.p75,type:"scatter",mode:"lines",showlegend:false,line:{color:"rgba(88,166,255,0.2)",width:0}},
+    {x:months,y:bands.p25,type:"scatter",mode:"lines",name:"P25-P75",fill:"tonexty",fillcolor:"rgba(88,166,255,0.15)",line:{color:"rgba(88,166,255,0.2)",width:0}},
+    {x:months,y:bands.p50,type:"scatter",mode:"lines",name:"Median",line:{color:"#58a6ff",width:2}}
+  ];
+  ["class_a","class_b","class_c"].forEach(function(cls){
+    var trate=triggers[cls];
+    if(!trate)return;
+    traces.push({x:[0,months[months.length-1]],y:[trate,trate],type:"scatter",mode:"lines",
+      name:cls.replace("class_","Class ").replace("_"," ")+" "+trate,
+      line:{color:ccols[cls],width:1,dash:"dot"}});
+  });
+  var anns=(fc.annotations||[]).map(function(a){
+    return{x:a.month,y:bands.p50[a.month]||bands.p50[bands.p50.length-1],
+      text:a.label,showarrow:true,arrowhead:2,ax:0,ay:-28,
+      font:{color:"#8b949e",size:9},arrowcolor:"#8b949e"};
+  });
+  Plotly.newPlot("ch-forecast-fan",traces,PL({yaxis:{title:"KES/GBP Rate"},xaxis:{title:"Month"},
+    showlegend:true,margin:{t:20,r:20,b:50,l:70},annotations:anns}),PC);
+  var cp=fc.cumulative_trigger_probability||{};
+  Plotly.newPlot("ch-forecast-probs",[{x:months,y:cp.class_a||[],type:"scatter",mode:"lines",name:"Class A",line:{color:"#ffa657",width:2}},
+    {x:months,y:cp.class_b||[],type:"scatter",mode:"lines",name:"Class B",line:{color:"#58a6ff",width:2}},
+    {x:months,y:cp.class_c||[],type:"scatter",mode:"lines",name:"Class C",line:{color:"#bc8cff",width:2}}],
+    PL({xaxis:{title:"Month"},yaxis:{title:"Cumulative Trigger Prob (%)"},showlegend:true}),PC);
+  var ew=fc.early_warning_6m||[];
+  Plotly.newPlot("ch-forecast-ew",[{x:months,y:ew,type:"scatter",mode:"lines",name:"P(Class A breach in 6mo)",
+    line:{color:"#f85149",width:2},fill:"tozeroy",fillcolor:"rgba(248,81,73,0.1)"},
+    {x:[0,months[months.length-1]],y:[50,50],type:"scatter",mode:"lines",name:"50% alert threshold",
+    line:{color:"#d29922",width:1,dash:"dash"}}],
+    PL({xaxis:{title:"Month"},yaxis:{title:"P(breach within 6mo) %"},showlegend:true}),PC);
+}
+
+function renderTrancheSpacing(D){
+  var ts=D.tranche_spacing;
+  if(!ts)return;
+  var verdict=ts.structural_verdict||"";
+  var vColor=verdict.indexOf("PASS")>=0?"#3fb950":verdict.indexOf("MARGINAL")>=0?"#d29922":"#f85149";
+  document.getElementById("spacing-verdict").innerHTML=
+    '<div class="card" style="border-left:4px solid '+vColor+';padding:12px 16px;background:#161b22">'
+    +'<strong style="color:'+vColor+'">'+verdict.split("—")[0]+'</strong>'
+    +'<p style="color:#8b949e;margin:6px 0 0;font-size:13px">'+(verdict.split("—")[1]||"")+"</p></div>";
+  var ab=ts.class_a_b||{},bc=ts.class_b_c||{};
+  Plotly.newPlot("ch-spacing-ab",[{type:"bar",x:["Within 3mo","Within 6mo","Within 12mo"],
+    y:[ab.pct_within_3mo||0,ab.pct_within_6mo||0,ab.pct_within_12mo||0],
+    marker:{color:["#f85149","#ffa657","#d29922"]},
+    text:[(ab.pct_within_3mo||0)+"%",(ab.pct_within_6mo||0)+"%",(ab.pct_within_12mo||0)+"%"],textposition:"auto"}],
+    PL({yaxis:{title:"% of triggered paths",range:[0,100]},showlegend:false,
+      shapes:[{type:"line",x0:-0.5,x1:2.5,y0:50,y1:50,line:{color:"#d29922",width:1,dash:"dash"}}]}),PC);
+  Plotly.newPlot("ch-spacing-bc",[{type:"bar",x:["Within 3mo","Within 6mo","Within 12mo"],
+    y:[bc.pct_within_3mo||0,bc.pct_within_6mo||0,bc.pct_within_12mo||0],
+    marker:{color:["#f85149","#ffa657","#d29922"]},
+    text:[(bc.pct_within_3mo||0)+"%",(bc.pct_within_6mo||0)+"%",(bc.pct_within_12mo||0)+"%"],textposition:"auto"}],
+    PL({yaxis:{title:"% of triggered paths",range:[0,100]},showlegend:false,
+      shapes:[{type:"line",x0:-0.5,x1:2.5,y0:50,y1:50,line:{color:"#d29922",width:1,dash:"dash"}}]}),PC);
+  var clsLabels=["Class A\u2192B","Class B\u2192C"];
+  var medians=[ab.median_gap_months||0,bc.median_gap_months||0];
+  var p25s=[ab.p25_gap_months||0,bc.p25_gap_months||0];
+  var p75s=[ab.p75_gap_months||0,bc.p75_gap_months||0];
+  var simRisk=(ts.simultaneous_risk||{}).pct_all_three_same_year||0;
+  Plotly.newPlot("ch-spacing-probs",[{type:"bar",name:"P25",x:clsLabels,y:p25s,marker:{color:"#21262d"}},
+    {type:"bar",name:"Median",x:clsLabels,y:medians,marker:{color:"#58a6ff"},
+      text:medians.map(function(m){return m+" mo";}),textposition:"auto"},
+    {type:"bar",name:"P75",x:clsLabels,y:p75s,marker:{color:"#30363d"}}],
+    PL({barmode:"group",yaxis:{title:"Months between triggers"},showlegend:true,
+      annotations:[{x:0,y:Math.max(medians[0],p75s[0])+2,
+        text:"All-3 same year: "+simRisk+"%",showarrow:false,
+        font:{color:"#ffa657",size:10},xanchor:"center"}]}),PC);
+}
+
 boot();
 </script>
 </body>

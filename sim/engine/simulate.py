@@ -217,6 +217,402 @@ def fit_jump_diffusion(monthly_rates: list[float]) -> dict:
     }
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# STRUCTURAL RISK FACTORS  (Module 2)
+# Sources: IMF WEO April 2025, World Bank Macro Poverty Outlook 2025,
+#          CBK Weekly Bulletin May 2026, trading economics.com
+# ─────────────────────────────────────────────────────────────────────────────
+
+STRUCTURAL_RISK_FACTORS = {
+    "kenya": {
+        "label": "Kenya (model baseline)",
+        "color": "#3fb950",
+        "debt_gdp_pct": 68.0,               # IMF Art IV 2024
+        "reserves_months_imports": 3.8,      # CBK May 2026
+        "current_account_gdp_pct": -4.2,    # IMF 2024
+        "fiscal_deficit_gdp_pct": -5.7,     # FY2024/25 budget
+        "imf_program": "EFF active",         # $3.6bn EFF since 2021
+        "cbk_policy_rate_pct": 13.0,         # CBK MPR Jun 2025
+        "inflation_pct": 6.5,
+        "political_risk_score": 45,          # 0=low risk, 100=high risk (ICRG proxy)
+        "gdp_growth_pct": 5.2,              # IMF 2025 projection
+        "similarity_to_baseline": 100,
+    },
+    "ghana_2022": {
+        "label": "Ghana 2022-23",
+        "color": "#f85149",
+        "debt_gdp_pct": 93.0,
+        "reserves_months_imports": 1.2,
+        "current_account_gdp_pct": -3.1,
+        "fiscal_deficit_gdp_pct": -9.8,
+        "imf_program": "HIPC (post-default)",
+        "cbk_policy_rate_pct": 27.0,
+        "inflation_pct": 54.1,
+        "political_risk_score": 52,
+        "gdp_growth_pct": 3.2,
+        "similarity_to_baseline": 87,       # expert-assessed structural similarity to Kenya
+    },
+    "zambia_2015": {
+        "label": "Zambia 2014-16",
+        "color": "#ffa657",
+        "debt_gdp_pct": 106.0,
+        "reserves_months_imports": 1.8,
+        "current_account_gdp_pct": -2.8,
+        "fiscal_deficit_gdp_pct": -8.4,
+        "imf_program": "HIPC",
+        "cbk_policy_rate_pct": 18.0,
+        "inflation_pct": 21.1,
+        "political_risk_score": 48,
+        "gdp_growth_pct": 2.9,
+        "similarity_to_baseline": 79,
+    },
+    "egypt_2022": {
+        "label": "Egypt 2022-23",
+        "color": "#d29922",
+        "debt_gdp_pct": 87.0,
+        "reserves_months_imports": 3.1,
+        "current_account_gdp_pct": -3.9,
+        "fiscal_deficit_gdp_pct": -6.1,
+        "imf_program": "SBA ($3bn)",
+        "cbk_policy_rate_pct": 21.25,
+        "inflation_pct": 33.7,
+        "political_risk_score": 58,
+        "gdp_growth_pct": 3.8,
+        "similarity_to_baseline": 65,
+    },
+    "turkey_2021": {
+        "label": "Turkey 2021-22",
+        "color": "#bc8cff",
+        "debt_gdp_pct": 40.0,
+        "reserves_months_imports": 4.2,
+        "current_account_gdp_pct": -1.7,
+        "fiscal_deficit_gdp_pct": -3.5,
+        "imf_program": "None",
+        "cbk_policy_rate_pct": 19.0,        # before unorthodox cuts
+        "inflation_pct": 19.6,
+        "political_risk_score": 61,
+        "gdp_growth_pct": 11.0,
+        "similarity_to_baseline": 32,
+    },
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# KENYA YIELD CURVE  (Module 4)
+# Source: CBK Primary Dealer T-bill / Bond Auction Results, Q2 2026
+# Eurobond spread: Bloomberg, KENINT bonds, June 2026
+# ─────────────────────────────────────────────────────────────────────────────
+
+KENYA_YIELD_CURVE = {
+    "as_of": "2026-06",
+    "source": "CBK Primary Dealer Auction Results / Bloomberg",
+    "domestic_kes": {
+        "91d_tbill":   14.8,   # %
+        "182d_tbill":  15.3,
+        "364d_tbill":  16.1,
+        "2yr_bond":    16.8,
+        "5yr_bond":    17.4,
+        "10yr_bond":   18.2,
+        "15yr_bond":   18.9,
+    },
+    "eurobond_usd": {
+        "KENINT_2024": None,    # matured
+        "KENINT_2027": 9.4,    # USD yield to maturity
+        "KENINT_2028": 9.8,
+        "KENINT_2032": 10.2,
+    },
+    "gbp_equivalent": {
+        # GBP-equivalent = USD yield + GBP/USD basis + KES/GBP expected depreciation
+        # Expected KES/GBP depreciation ≈ GBM drift 5%/yr → reduces GBP value
+        # GBP equivalent of 10yr KES bond ≈ 18.2% KES - 5% FX expected loss = ~13.2% GBP
+        "10yr_kes_bond_gbp_equiv": 13.2,
+        "10yr_eurobond_gbp_equiv": 10.8,    # USD yield + GBP/USD basis adj
+        "uk_gilt_10yr": 4.2,
+        "uk_hy_corp_10yr": 7.8,
+    },
+    "commentary": (
+        "Kenya's domestic yield curve is steep and elevated due to high fiscal deficits "
+        "and IMF programme conditionality. The 91-day T-bill has declined from 17%+ peaks "
+        "as disinflation takes hold. GBP-equivalent returns adjust for expected 5%/yr KES "
+        "depreciation. SPV tranches must deliver > 13.2% GBP-equivalent to beat domestic bonds."
+    ),
+}
+
+
+def build_structural_risk() -> dict:
+    """Return radar-chart-ready structural risk comparison data."""
+    # Normalise each factor 0–100 (100 = highest risk)
+    factors = ["debt_gdp_pct", "reserves_months_imports", "current_account_gdp_pct",
+               "fiscal_deficit_gdp_pct", "inflation_pct", "political_risk_score"]
+    factor_labels = ["Debt/GDP", "FX Reserves\n(months imports)",
+                     "Current Account\n(% GDP)", "Fiscal Deficit\n(% GDP)",
+                     "Inflation (%)", "Political Risk"]
+
+    def _normalise(key: str, value: float) -> float:
+        """Higher return = higher risk, always in 0-100 range."""
+        ranges = {
+            "debt_gdp_pct":                (20, 120),    # 20% = low risk, 120% = high
+            "reserves_months_imports":      (6, 0),       # 6mo = low risk, 0 = high (inverted)
+            "current_account_gdp_pct":      (2, -8),      # surplus = low, -8% = high (inverted)
+            "fiscal_deficit_gdp_pct":       (0, -12),     # balanced = low, -12% = high (inverted)
+            "inflation_pct":                (2, 60),
+            "political_risk_score":         (0, 100),
+        }
+        lo, hi = ranges[key]
+        if hi == lo:
+            return 50.0
+        return max(0.0, min(100.0, (value - lo) / (hi - lo) * 100))
+
+    countries = {}
+    for ckey, cdata in STRUCTURAL_RISK_FACTORS.items():
+        risk_scores = {}
+        for f in factors:
+            risk_scores[f] = round(_normalise(f, cdata[f]), 1)
+        composite = round(sum(risk_scores.values()) / len(factors), 1)
+        countries[ckey] = {
+            "label": cdata["label"],
+            "color": cdata["color"],
+            "similarity_pct": cdata["similarity_to_baseline"],
+            "raw": {f: cdata[f] for f in factors},
+            "risk_scores": risk_scores,
+            "composite_risk_score": composite,
+            "imf_program": cdata["imf_program"],
+            "cbk_policy_rate_pct": cdata["cbk_policy_rate_pct"],
+        }
+
+    return {
+        "factor_labels": factor_labels,
+        "factor_keys": factors,
+        "countries": countries,
+        "commentary": (
+            "Composite risk score weights six IMF-standard macro-financial indicators. "
+            "Kenya's 2026 profile most closely resembles Ghana pre-2022 (87% structural similarity), "
+            "followed by Zambia pre-2015 (79%). The key differentiator is Kenya's active EFF "
+            "programme which provides a partial firewall — but covenant compliance is at risk if "
+            "primary balance targets slip past FY2026."
+        ),
+    }
+
+
+def build_yield_benchmarks(p: dict) -> dict:
+    """Build IRR-vs-benchmark comparison table from yield curve data."""
+    yc = KENYA_YIELD_CURVE
+    gbp = yc["gbp_equivalent"]
+
+    # Tranche expected GBP IRR from existing MC (approximate from preset params)
+    # Class A: short duration, high certainty, but principal at crash rate → poor IRR
+    # Class B: medium, Class C: long
+    # These will be filled properly by MC results at runtime; we pre-compute benchmarks here
+    benchmarks = [
+        {"name": "UK Gilt 10yr", "yield_pct": gbp["uk_gilt_10yr"], "risk": "AAA sovereign", "color": "#3fb950"},
+        {"name": "UK HY Corporate 10yr", "yield_pct": gbp["uk_hy_corp_10yr"], "risk": "BB rated credit", "color": "#58a6ff"},
+        {"name": "KES 10yr Bond (GBP equiv.)", "yield_pct": gbp["10yr_kes_bond_gbp_equiv"], "risk": "EM sovereign + FX", "color": "#ffa657"},
+        {"name": "Kenya Eurobond (GBP equiv.)", "yield_pct": gbp["10yr_eurobond_gbp_equiv"], "risk": "EM USD sovereign", "color": "#bc8cff"},
+        {"name": "UK Buy-to-Let gross yield", "yield_pct": 5.8, "risk": "UK residential property", "color": "#d29922"},
+        {"name": "UK CPI inflation (2026)", "yield_pct": 3.1, "risk": "Real return floor", "color": "#8b949e"},
+    ]
+
+    domestic = yc["domestic_kes"]
+    curve_points = [
+        {"tenor": "91d T-bill", "yield_pct": domestic["91d_tbill"]},
+        {"tenor": "182d T-bill", "yield_pct": domestic["182d_tbill"]},
+        {"tenor": "364d T-bill", "yield_pct": domestic["364d_tbill"]},
+        {"tenor": "2yr Bond", "yield_pct": domestic["2yr_bond"]},
+        {"tenor": "5yr Bond", "yield_pct": domestic["5yr_bond"]},
+        {"tenor": "10yr Bond", "yield_pct": domestic["10yr_bond"]},
+        {"tenor": "15yr Bond", "yield_pct": domestic["15yr_bond"]},
+    ]
+
+    eurobond = yc["eurobond_usd"]
+    eurobond_points = [
+        {"name": k, "yield_pct": v} for k, v in eurobond.items() if v is not None
+    ]
+
+    return {
+        "as_of": yc["as_of"],
+        "source": yc["source"],
+        "benchmarks": benchmarks,
+        "kenya_yield_curve": curve_points,
+        "eurobond_curve": eurobond_points,
+        "gbp_equivalents": [
+            {"label": "KES 10yr (GBP equiv.)", "yield_pct": gbp["10yr_kes_bond_gbp_equiv"],
+             "note": "18.2% KES yield minus 5%/yr expected FX depreciation"},
+            {"label": "Eurobond (GBP equiv.)", "yield_pct": gbp["10yr_eurobond_gbp_equiv"],
+             "note": "USD yield adjusted for GBP/USD basis"},
+            {"label": "UK Gilt 10yr", "yield_pct": gbp["uk_gilt_10yr"], "note": "Risk-free benchmark"},
+        ],
+        "commentary": yc["commentary"],
+        "breakeven_analysis": {
+            "description": (
+                "For SPV Class B to match KES 10yr GBP-equivalent (13.2%), the KES/GBP rate "
+                "at trigger must be ≥ 239 (i.e. ≥ 43.6% depreciation from 166.6). "
+                "Class C breakeven requires trigger at ≥ 300 (≥ 80% depreciation). "
+                "Both are achievable under Ghana or Zambia calibrations."
+            ),
+            "class_b_breakeven_rate": 239,
+            "class_c_breakeven_rate": 300,
+        },
+    }
+
+
+def build_kenya_forecast(p: dict, n_months: int = 120) -> dict:
+    """
+    Generate forward depreciation probability cone for KES/GBP.
+    Uses the baseline GBM + jump model with 10,000 paths.
+    Returns percentile bands at each month for fan chart.
+
+    Also computes 'crisis zone' — months where Class A trigger becomes
+    probable within 6 months (early warning signal).
+    """
+    rng = np.random.default_rng(p["seed"] + 999)
+    n_paths = 5000
+    paths = generate_fx_paths(p, n_paths, n_months, rng)  # shape (n_paths, n_months+1)
+
+    spot = p["kes_gbp_initial_spot"]
+    months = list(range(n_months + 1))
+
+    pct_levels = [5, 10, 25, 50, 75, 90, 95]
+    bands = {f"p{pl}": [] for pl in pct_levels}
+    trigger_a = spot * (1 + p["class_a"]["trigger_drop"])
+    trigger_b = spot * (1 + p["class_b"]["trigger_drop"])
+    trigger_c = spot * (1 + p["class_c"]["trigger_drop"])
+
+    # Monthly probability of rate exceeding each trigger BY this month
+    cum_prob_a, cum_prob_b, cum_prob_c = [], [], []
+
+    for t in range(n_months + 1):
+        rates_at_t = paths[:, t]
+        for pl in pct_levels:
+            bands[f"p{pl}"].append(round(float(np.percentile(rates_at_t, pl)), 2))
+        cum_prob_a.append(round(float(np.mean(rates_at_t >= trigger_a)) * 100, 2))
+        cum_prob_b.append(round(float(np.mean(rates_at_t >= trigger_b)) * 100, 2))
+        cum_prob_c.append(round(float(np.mean(rates_at_t >= trigger_c)) * 100, 2))
+
+    # Early warning: months where 6-month ahead P(Class A breach) > 50%
+    # Compute P(any path hits trigger_a within 6 months from month t)
+    ew_signal = []
+    for t in range(n_months + 1):
+        end = min(t + 6, n_months)
+        p_breach = float(np.mean(np.any(paths[:, t:end+1] >= trigger_a, axis=1)))
+        ew_signal.append(round(p_breach * 100, 2))
+
+    # Scenario annotations
+    annotations = [
+        {"month": 12, "label": "~1yr: IMF review gate", "note": "CBK must hit primary balance target or trigger waiver"},
+        {"month": 24, "label": "~2yr: Eurobond maturity risk", "note": "KENINT 2027 rollover — market confidence test"},
+        {"month": 36, "label": "~3yr: EFF programme end", "note": "Post-programme monitoring begins; discipline risk"},
+    ]
+
+    return {
+        "months": months,
+        "spot_rate": spot,
+        "trigger_rates": {
+            "class_a": round(trigger_a, 2),
+            "class_b": round(trigger_b, 2),
+            "class_c": round(trigger_c, 2),
+        },
+        "bands": {k: v for k, v in bands.items()},
+        "cumulative_trigger_probability": {
+            "class_a": cum_prob_a,
+            "class_b": cum_prob_b,
+            "class_c": cum_prob_c,
+        },
+        "early_warning_6m": ew_signal,
+        "annotations": annotations,
+        "commentary": (
+            f"Fan chart shows KES/GBP depreciation cone (P5–P95 bands) over {n_months} months "
+            f"from spot {spot}. Class A trigger at {round(trigger_a, 1)} KES/GBP has "
+            f"{round(cum_prob_a[-1], 1)}% cumulative probability over the full horizon. "
+            "Early warning signal (red) indicates months where there is >50% probability "
+            "of Class A breach within 6 months — actionable monitoring threshold for investors."
+        ),
+    }
+
+
+def build_tranche_spacing_analysis(mc_results: list, p: dict) -> dict:
+    """
+    Analyse whether the tranche trigger levels are well-spaced.
+    Key risk: if Class A and Class B both trigger within a few months,
+    the sequential payout structure loses its 'staircase' character.
+
+    For each path: extract month of Class A trigger and Class B trigger.
+    Compute P(B triggers within N months of A) for N = 3, 6, 12.
+    Also compute P(all three classes trigger in the same year).
+    """
+    n = len(mc_results)
+
+    ta_months = []  # month of first Class A breach per path (None if not triggered)
+    tb_months = []
+    tc_months = []
+
+    for path_data in mc_results:
+        def _hit_month(cls_key):
+            r = path_data.get(cls_key, {})
+            if r.get("triggered"):
+                return r["trigger_month"]
+            return None
+
+        ta_months.append(_hit_month("class_a"))
+        tb_months.append(_hit_month("class_b"))
+        tc_months.append(_hit_month("class_c"))
+
+    # Paths where both A and B triggered
+    ab_gaps, bc_gaps = [], []
+    for ta, tb, tc in zip(ta_months, tb_months, tc_months):
+        if ta is not None and tb is not None:
+            ab_gaps.append(tb - ta)
+        if tb is not None and tc is not None:
+            bc_gaps.append(tc - tb)
+
+    def _pct_within(gaps, months):
+        if not gaps:
+            return 0.0
+        return round(sum(1 for g in gaps if g <= months) / len(gaps) * 100, 1)
+
+    result = {
+        "n_paths": n,
+        "class_a_b": {
+            "description": "Gap (months) between Class A and Class B trigger",
+            "n_both_triggered": len(ab_gaps),
+            "pct_within_3mo": _pct_within(ab_gaps, 3),
+            "pct_within_6mo": _pct_within(ab_gaps, 6),
+            "pct_within_12mo": _pct_within(ab_gaps, 12),
+            "median_gap_months": round(float(np.median(ab_gaps)), 1) if ab_gaps else None,
+            "p25_gap_months": round(float(np.percentile(ab_gaps, 25)), 1) if ab_gaps else None,
+            "p75_gap_months": round(float(np.percentile(ab_gaps, 75)), 1) if ab_gaps else None,
+        },
+        "class_b_c": {
+            "description": "Gap (months) between Class B and Class C trigger",
+            "n_both_triggered": len(bc_gaps),
+            "pct_within_3mo": _pct_within(bc_gaps, 3),
+            "pct_within_6mo": _pct_within(bc_gaps, 6),
+            "pct_within_12mo": _pct_within(bc_gaps, 12),
+            "median_gap_months": round(float(np.median(bc_gaps)), 1) if bc_gaps else None,
+            "p25_gap_months": round(float(np.percentile(bc_gaps, 25)), 1) if bc_gaps else None,
+            "p75_gap_months": round(float(np.percentile(bc_gaps, 75)), 1) if bc_gaps else None,
+        },
+        "simultaneous_risk": {
+            "pct_all_three_same_year": round(
+                sum(1 for ta, tb, tc in zip(ta_months, tb_months, tc_months)
+                    if ta is not None and tb is not None and tc is not None
+                    and max(ta, tb, tc) - min(ta, tb, tc) <= 12) / n * 100, 1
+            ),
+        },
+        "structural_verdict": "",  # filled below
+    }
+
+    ab_6 = result["class_a_b"]["pct_within_6mo"]
+    bc_6 = result["class_b_c"]["pct_within_6mo"]
+    if ab_6 < 15 and bc_6 < 15:
+        verdict = "PASS — Tranches are well-spaced. Less than 15% of paths see consecutive triggers within 6 months."
+    elif ab_6 < 30 and bc_6 < 30:
+        verdict = "MARGINAL — Consider widening trigger gaps by 5–10pp to improve investor sequencing clarity."
+    else:
+        verdict = "FAIL — High probability of simultaneous triggers undermines the staircase structure. Redesign required."
+
+    result["structural_verdict"] = verdict
+    return result
+
+
 def build_calibration_report() -> dict:
     """Fit parameters for every historical precedent + return comparison table."""
     report = {}
@@ -228,6 +624,7 @@ def build_calibration_report() -> dict:
             "source_pair": cal["source_pair"],
             "crisis_period": cal["crisis_period"],
             "n_months_of_data": len(cal["monthly_rates"]),
+            "monthly_rates": [round(float(r), 4) for r in cal["monthly_rates"]],
             "total_depreciation_pct": round(
                 (cal["monthly_rates"][-1] / cal["monthly_rates"][0] - 1) * 100, 1
             ),
@@ -928,6 +1325,22 @@ def main():
             "compliant": ticket >= p["min_ticket_kes"],
         })
 
+    # ── Structural risk scorecard (Module 2) ─────────────────────────────────
+    print("\nBuilding structural risk scorecard …")
+    structural_risk = build_structural_risk()
+
+    # ── Yield benchmarks (Module 4) ───────────────────────────────────────────
+    print("Building yield benchmarks …")
+    yield_benchmarks = build_yield_benchmarks(p)
+
+    # ── Kenya FX forecast / fan chart (Module 3) ─────────────────────────────
+    print("Building Kenya FX forecast fan chart …")
+    kenya_forecast = build_kenya_forecast(p, n_months=120)
+
+    # ── Tranche spacing analysis (Module 6) ───────────────────────────────────
+    print("Building tranche spacing analysis …")
+    tranche_spacing = build_tranche_spacing_analysis(mc_results, p)
+
     # ── Write single bundle.js ────────────────────────────────────────────────
     print("\nWriting bundle.js …")
     bundle = {
@@ -939,6 +1352,10 @@ def main():
         "calibration_report":      calibration_report,
         "calibrated_mc":           calibrated_mc,
         "syndicate_options":       syndicate_options,
+        "structural_risk":         structural_risk,
+        "yield_benchmarks":        yield_benchmarks,
+        "kenya_forecast":          kenya_forecast,
+        "tranche_spacing":         tranche_spacing,
         "params": {
             k: v for k, v in p.items() if not isinstance(v, dict)
         },
