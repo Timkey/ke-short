@@ -11,7 +11,7 @@
   No fetch(), no CORS — works on file://, GitHub Pages, any static host.
   To regenerate data:  cd sim && docker compose run --rm engine
 -->
-<script src="./data/bundle.js?v=7" onerror="window.__BUNDLE_MISSING=true"></script>
+<script src="./data/bundle.js?v=8" onerror="window.__BUNDLE_MISSING=true"></script>
 <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
 <style>
 :root{
@@ -209,7 +209,7 @@ tr:hover td{background:var(--s2)}
   </p>
   <div class="cal-btns" id="cal-btns"></div>
   <div class="g2">
-    <div class="chart-card"><h2>Historical FX Rate Series</h2><div class="desc">Actual monthly rates used to fit the model.</div><div id="ch-cal-rates" style="height:260px"></div></div>
+    <div class="chart-card"><h2>Calibrated GBM Depreciation Profile</h2><div class="desc">Index (start=100) showing fitted-params median path ± P10/P90 uncertainty band over the crisis horizon. Shaded band = GBM volatility cone.</div><div id="ch-cal-rates" style="height:260px"></div></div>
     <div class="card" id="cal-detail-card" style="min-height:260px"><h3>Calibration Details</h3><div id="cal-detail-body"></div></div>
   </div>
   <div class="chart-card">
@@ -530,11 +530,24 @@ function renderCalibration(D){
     PL({barmode:"group",yaxis:{title:"Parameter Value"},xaxis:{title:""}}),PC);
 }
 function drawCalibration(D,key){
-  var cal=D.calibration_report[key],rates=cal.monthly_rates||[],months=[];
-  for(var i=0;i<rates.length;i++)months.push(i+1);
-  Plotly.newPlot("ch-cal-rates",[{x:months,y:rates,type:"scatter",mode:"lines+markers",line:{color:"#bc8cff",width:2},marker:{size:4},name:cal.source_pair}],
-    PL({xaxis:{title:"Month"},yaxis:{title:cal.source_pair+" Rate"}}),PC);
+  var cal=D.calibration_report[key];
   var fp=cal.fitted_params||{},pp=cal.preset_params||{};
+  var n=cal.n_months_of_data||24;
+  var drift=(fp.gbm_annual_drift||0.1)/12;
+  var vol=(fp.gbm_annual_vol||0.1)/Math.sqrt(12);
+  var months=[],med=[],p10=[],p90=[];
+  for(var t=0;t<=n;t++){
+    months.push(t);
+    var m=100*Math.exp(drift*t);
+    med.push(+m.toFixed(2));
+    p10.push(+(m*Math.exp(-1.28*vol*Math.sqrt(t||1))).toFixed(2));
+    p90.push(+(m*Math.exp(1.28*vol*Math.sqrt(t||1))).toFixed(2));
+  }
+  Plotly.newPlot("ch-cal-rates",[
+    {x:months,y:p90,type:"scatter",mode:"lines",name:"P90 band",line:{color:"#bc8cff",width:0},fill:"tonexty",fillcolor:"rgba(188,140,255,0.10)",showlegend:false},
+    {x:months,y:med,type:"scatter",mode:"lines",name:"Median path",line:{color:"#bc8cff",width:2.5},fill:"tonexty",fillcolor:"rgba(188,140,255,0.10)"},
+    {x:months,y:p10,type:"scatter",mode:"lines",name:"P10 band",line:{color:"#bc8cff",width:0},fill:"tonexty",fillcolor:"rgba(188,140,255,0.10)",showlegend:false}
+  ],PL({xaxis:{title:"Month (0 = crisis start)"},yaxis:{title:"Exchange Rate Index (start = 100)"}}),PC);
   document.getElementById("cal-detail-body").innerHTML=
     '<div class="kv-row" style="margin-bottom:10px">'+kv("Pair",cal.source_pair)+kv("Period",cal.crisis_period)+kv("Data months",cal.n_months_of_data)+kv("Total depreciation",fPct(cal.total_depreciation_pct,1))+'</div>'
     +'<div class="sep"></div><p style="font-size:11px;color:var(--muted);margin:8px 0">'+cal.description+'</p>'
