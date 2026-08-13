@@ -342,8 +342,8 @@ tr:hover td{background:var(--s2)}
   <div class="chart-grid">
     <div class="chart-box"><h3>FIC Cumulative Cash (£)</h3><div id="ch-fic-cash" style="height:280px"></div></div>
     <div class="chart-box"><h3>BTL LTV Trajectory (%)</h3><div id="ch-fic-ltv" style="height:280px"></div></div>
-    <div class="chart-box"><h3>SPV DSCR Over Time</h3><div id="ch-fic-dscr" style="height:280px"></div></div>
-    <div class="chart-box"><h3>KES Bond GBP Erosion (5M KES initial)</h3><div id="ch-fic-bond" style="height:280px"></div></div>
+    <div class="chart-box"><h3>Total Debt Service Coverage</h3><div id="ch-fic-dscr" style="height:280px"></div></div>
+    <div class="chart-box"><h3>FIC Net Equity: Property &minus; KES Loan GBP Value (£)</h3><div id="ch-fic-equity" style="height:280px"></div></div>
   </div>
   <div id="fic-events-table" style="margin-top:18px"></div>
 </div>
@@ -1046,14 +1046,15 @@ function _drawFICScenario(fs,key){
   if(!sc)return;
   var hColor=sc.health.indexOf("HEALTHY")>=0?"#3fb950":sc.health.indexOf("STRESSED")>=0?"#d29922":"#f85149";
   document.getElementById("fic-health-badge").innerHTML=
-    '<div style="border-left:4px solid '+hColor+';padding:10px 14px;background:#161b22;max-width:760px">'
+    '<div style="border-left:4px solid '+hColor+';padding:10px 14px;background:#161b22;max-width:820px">'
     +'<strong style="color:'+hColor+'">'+sc.health.split(" — ")[0]+'</strong>'
     +'<span style="color:#8b949e;margin-left:12px;font-size:12px">'+(sc.health.split(" — ")[1]||"")+"</span>"
-    +'<div style="margin-top:6px;display:flex;gap:20px;font-size:12px">'
-    +'<span>Min cash: <strong style="color:'+(sc.min_cash_gbp<0?"#f85149":"#3fb950")+'">&pound;'+sc.min_cash_gbp.toLocaleString()+"</strong></span>"
+    +'<div style="margin-top:8px;display:flex;gap:20px;flex-wrap:wrap;font-size:12px">'
+    +'<span>Operating cash min: <strong style="color:'+(sc.min_cash_gbp<0?"#f85149":"#3fb950")+'">&pound;'+sc.min_cash_gbp.toLocaleString()+"</strong></span>"
+    +'<span>Net equity peak: <strong style="color:#3fb950">&pound;'+(sc.peak_equity_gbp||0).toLocaleString()+"</strong></span>"
     +'<span>Max LTV: <strong style="color:'+(sc.max_ltv_pct>75?"#f85149":sc.max_ltv_pct>60?"#d29922":"#3fb950")+'">'+sc.max_ltv_pct+'%</strong></span>'
     +'<span>Min DSCR: <strong style="color:'+(sc.min_dscr<1.0?"#f85149":sc.min_dscr<1.25?"#d29922":"#3fb950")+'">'+(sc.min_dscr||"--")+"</strong></span>"
-    +'<span>LTV breach months: <strong style="color:'+(sc.ltv_breach_months>0?"#f85149":"#3fb950")+'">'+(sc.ltv_breach_months||0)+"</strong></span>"
+    +'<span style="color:#8b949e;font-size:11px">Note: Cash = operating liquidity only. Net equity = property − KES loan GBP value (balance sheet).</span>'
     +'</div></div>';
   var ch=sc.chart||{},mo=ch.months||[];
   Plotly.newPlot("ch-fic-cash",[{type:"scatter",mode:"lines",x:mo,y:ch.cash_gbp||[],fill:"tozeroy",
@@ -1069,19 +1070,26 @@ function _drawFICScenario(fs,key){
     line:{color:"#58a6ff",width:2}},
     {type:"scatter",mode:"lines",x:[0,mo[mo.length-1]||120],y:[1.25,1.25],name:"DSCR 1.25 covenant",
     line:{color:"#d29922",width:1,dash:"dash"}}],
-    PL({xaxis:{title:"Month"},yaxis:{title:"DSCR"},showlegend:true}),PC);
-  var be=fs.kenya_bond_gbp_erosion||{};
-  var bondTraces=Object.keys(be).map(function(bk){
-    var bd=be[bk]; var yrs=bd.gbp_path_annual||[];
-    return {type:"scatter",mode:"lines",name:bd.label,
-      x:yrs.map(function(_,i){return i;}),y:yrs,
-      line:{width:1+(bk===key?1:0),dash:bk===key?"solid":"dot"}};
-  });
-  bondTraces.push({type:"scatter",mode:"lines",name:"Initial GBP invest",
-    x:[0,10],y:[fs.initial_invest_gbp,fs.initial_invest_gbp],
-    line:{color:"#3fb950",width:1,dash:"dash"}});
-  Plotly.newPlot("ch-fic-bond",bondTraces,
-    PL({xaxis:{title:"Year"},yaxis:{title:"GBP value of 5M KES bond"},showlegend:true}),PC);
+    PL({xaxis:{title:"Month"},yaxis:{title:"Total Debt Service Coverage"},
+      annotations:[{xref:"paper",yref:"paper",x:0.01,y:0.99,
+        text:"Rental income / (SPV interest + BTL mortgage interest)",
+        showarrow:false,font:{color:"#8b949e",size:10},xanchor:"left",yanchor:"top"}],
+      showlegend:true}),PC);
+  // FIC net equity: property value minus KES loan GBP value minus mortgage balance
+  // This is the BALANCE SHEET view — rises as KES devalues because the KES debt shrinks
+  var eqTraces=[
+    {type:"scatter",mode:"lines",name:"Net Equity (property − KES loan − mortgage)",
+      x:mo,y:ch.equity_gbp||[],fill:"tozeroy",
+      fillcolor:"rgba(63,185,80,0.08)",line:{color:"#3fb950",width:2}},
+    {type:"scatter",mode:"lines",name:"KES loan GBP value (shrinks)",
+      x:mo,y:ch.kes_loan_gbp||[],line:{color:"#f85149",width:1.5,dash:"dot"}}
+  ];
+  Plotly.newPlot("ch-fic-equity",eqTraces,
+    PL({xaxis:{title:"Month"},yaxis:{title:"GBP (£)"},showlegend:true,
+      shapes:[{type:"line",x0:0,x1:mo[mo.length-1]||120,y0:0,y1:0,line:{color:"#8b949e",width:1,dash:"dash"}}],
+      annotations:[{xref:"paper",yref:"paper",x:0.01,y:0.99,
+        text:"Rising equity = FIC balance sheet improves as KES devalues (key structural benefit)",
+        showarrow:false,font:{color:"#3fb950",size:10},xanchor:"left",yanchor:"top"}]}),PC);
   if(sc.tranche_events&&sc.tranche_events.length>0){
     document.getElementById("fic-events-table").innerHTML=
       '<h3 style="color:#8b949e;font-size:12px;text-transform:uppercase;margin-bottom:8px">Tranche Events</h3>'

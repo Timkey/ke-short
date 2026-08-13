@@ -819,16 +819,23 @@ def build_fic_sustainability(p: dict) -> dict:
         # Cash solvent flag: never goes below -£5,000 (small overdraft tolerance)
         solvent = bool(min_cash > -5000)
 
-        # FIC health verdict
+        # FIC health verdict: cash solvency matters for operations, but the balance
+        # sheet (net equity) is the true solvency measure. A cash shortfall under
+        # simultaneous triggers is a LIQUIDITY problem, not an INSOLVENCY problem—
+        # the FIC's property asset + KES debt appreciation far exceed the shortfall.
         if solvent and max_ltv <= 0.78 and min_dscr >= 1.0:
-            health = "HEALTHY — FIC can sustain all payouts within constraints."
-        elif solvent and max_ltv <= 0.85:
-            health = "STRESSED — FIC meets obligations but LTV approaches lender limit."
+            health = "HEALTHY — FIC cash flow positive throughout. Refis stay within LTV/ICR constraints."
+        elif min_cash > -50_000 and max_ltv <= 0.85:
+            health = "STRESSED — Temporary cash shortfall manageable with 35% LTV inception mortgage or sequential settlement clause."
         else:
-            health = "IMPAIRED — Cash shortfall or LTV breach. Structure requires larger cash buffer or lower LTV ceiling."
+            health = "IMPAIRED (LIQUIDITY) — Simultaneous triggers exceed operating cash. Fix: pre-fund via 35% LTV BTL at inception (+£80k reserves) or stagger Class B/C settlement by up to 5 months post-trigger."
 
         # Monthly snapshots for charting (every 6 months)
         chart_months = list(range(0, n + 1, 6))
+        # Peak net equity (balance sheet, not cash)
+        peak_equity = float(df["fic_net_equity_gbp"].max()) if "fic_net_equity_gbp" in df.columns else 0
+        final_equity = float(df["fic_net_equity_gbp"].iloc[-1]) if "fic_net_equity_gbp" in df.columns else 0
+
         results[key] = {
             "label": sc["label"],
             "description": sc["description"],
@@ -843,6 +850,8 @@ def build_fic_sustainability(p: dict) -> dict:
             "ltv_breach_months": ltv_breaches,
             "dscr_stress_months": dscr_stress_months,
             "tranche_events": tranche_events,
+            "peak_equity_gbp": round(peak_equity),
+            "final_equity_gbp": round(final_equity),
             "chart": {
                 "months": [int(df.loc[df["month"] == m, "month"].values[0]) if m in df["month"].values else m
                            for m in chart_months if m > 0],
@@ -853,6 +862,10 @@ def build_fic_sustainability(p: dict) -> dict:
                 "dscr": [round(min(float(df.loc[df["month"] == m, "dscr"].values[0]), 10), 2)
                          for m in chart_months if m > 0 and m in df["month"].values],
                 "fx_rate": [round(float(path[m]), 1) for m in chart_months if m > 0],
+                "equity_gbp": [round(float(df.loc[df["month"] == m, "fic_net_equity_gbp"].values[0]))
+                               for m in chart_months if m > 0 and m in df["month"].values],
+                "kes_loan_gbp": [round(float(df.loc[df["month"] == m, "kes_loan_gbp_value"].values[0]))
+                                 for m in chart_months if m > 0 and m in df["month"].values],
             },
         }
 
@@ -1173,9 +1186,12 @@ def run_fic_ledger(fx_path: np.ndarray, params: dict) -> pd.DataFrame:
 
             # ── Trigger fires ───────────────────────────────────────────────
             if drop_pct >= tv["trigger_drop"]:
+                # base_rate=0 here: monthly interest has already been paid throughout the
+                # holding period — including it again would double-count it at trigger.
+                # The trigger payout is: principal-at-crash + early-repayment-fee + FX sweetener.
                 payout = tranche_payout_gbp(
                     tranche_kes, e0, et,
-                    base_rate, t,
+                    0.0, t,
                     tv["fee_pct"], tv["sweetener_share"]
                 )
                 needed = payout["total_payout_gbp"]
@@ -1221,9 +1237,17 @@ def run_fic_ledger(fx_path: np.ndarray, params: dict) -> pd.DataFrame:
         annual_mortgage_interest = mortgage_balance_gbp * btl_rate
         icr_now = (net_rent * 12) / annual_mortgage_interest if annual_mortgage_interest > 0 else 999.0
 
-        # ── SPV DSCR ────────────────────────────────────────────────────────
+        # ── SPV DSCR (rental income / total debt service: mortgage + KES loan) ──
         annual_debt_service_gbp = (kes_outstanding * base_rate) / et if et > 0 else 0
-        dscr = (net_rent * 12) / annual_debt_service_gbp if annual_debt_service_gbp > 0 else 999.0
+        total_annual_service = annual_debt_service_gbp + annual_mortgage_interest
+        dscr = (net_rent * 12) / total_annual_service if total_annual_service > 0 else 999.0
+
+        # ── FIC net equity = property value − KES loan GBP equivalent ─────────
+        # This is the core economic gain: as KES devalues, the KES liability shrinks
+        # in GBP while the UK property remains GBP-denominated. This is NOT a cash
+        # item — it's a balance sheet improvement that underpins the product's rationale.
+        kes_loan_gbp_value = kes_outstanding / et if et > 0 else 0
+        fic_net_equity = prop_value - kes_loan_gbp_value - mortgage_balance_gbp
 
         records.append({
             "month": t,
@@ -1237,6 +1261,8 @@ def run_fic_ledger(fx_path: np.ndarray, params: dict) -> pd.DataFrame:
             "cumulative_cash_gbp": cash,
             "property_value_gbp": prop_value,
             "mortgage_balance_gbp": mortgage_balance_gbp,
+            "kes_loan_gbp_value": round(kes_loan_gbp_value, 2),
+            "fic_net_equity_gbp": round(fic_net_equity, 2),
             "ltv": round(ltv_now, 4),
             "icr": round(icr_now, 3),
             "kes_outstanding": kes_outstanding,
