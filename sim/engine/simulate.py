@@ -1307,6 +1307,13 @@ def run_monte_carlo(params: dict) -> dict:
                     "trigger_rate": et,
                     "total_payout_gbp": payout["total_payout_gbp"],
                     "annual_irr": annual_irr,
+                    # Bond alternative: what a KES bond would have returned in GBP
+                    # over the SAME holding period on this SAME path.
+                    # bond_gbp_irr = (1+kes_rate) * (e0/et)^(12/t) - 1
+                    # This is the correct per-path comparison: SPV IRR vs bond GBP IRR.
+                    "bond_alt_gbp_irr": float(
+                        (1 + params["kenya_bond_yield_base"]) * (e0 / et) ** (12 / t_hit) - 1
+                    ),
                 }
             else:
                 path_result[cls_key] = {"triggered": False}
@@ -1507,10 +1514,14 @@ def aggregate_mc_results(mc_results: list[dict], params: dict) -> dict:
     for r in mc_results:
         for cls in ["class_b", "class_c"]:
             if r[cls]["triggered"]:
+                bond_alt = r[cls].get("bond_alt_gbp_irr", float("nan"))
                 irr_scatter.append({
                     "class": cls.replace("_", " ").title(),
                     "irr_pct": round(r[cls]["annual_irr"] * 100, 2),
-                    "domestic_bond_yield_pct": round(r["simulated_domestic_bond_yield"] * 100, 2),
+                    # X-axis: GBP-equivalent bond yield on this path at trigger
+                    "bond_alt_gbp_pct": round(bond_alt * 100, 2) if not np.isnan(bond_alt) else None,
+                    # Keep nominal KES yield for reference
+                    "nominal_kes_yield_pct": round(r["simulated_domestic_bond_yield"] * 100, 2),
                     "trigger_month": r[cls]["trigger_month"],
                 })
 
@@ -1566,6 +1577,10 @@ def aggregate_mc_results(mc_results: list[dict], params: dict) -> dict:
     for cls in ["class_b", "class_c"]:
         triggered = [r for r in mc_results if r[cls]["triggered"]]
         irrs_pct = [r[cls]["annual_irr"] * 100 for r in triggered if not np.isnan(r[cls]["annual_irr"])]
+        bond_alts_pct = [
+            r[cls]["bond_alt_gbp_irr"] * 100 for r in triggered
+            if not np.isnan(r[cls].get("bond_alt_gbp_irr", float("nan")))
+        ]
         if irrs_pct:
             counts, edges = np.histogram(irrs_pct, bins=40)
             irr_histograms[cls] = {
@@ -1575,6 +1590,14 @@ def aggregate_mc_results(mc_results: list[dict], params: dict) -> dict:
                 "median_pct": round(float(np.median(irrs_pct)), 2),
                 "p10_pct": round(float(np.percentile(irrs_pct, 10)), 2),
                 "p90_pct": round(float(np.percentile(irrs_pct, 90)), 2),
+                # Bond GBP-equivalent benchmark: what the KES bond returned in GBP
+                # on each path at the same trigger horizon. This is the correct
+                # comparison: NOT the 16% KES nominal rate.
+                "mean_bond_alt_gbp_pct": round(float(np.mean(bond_alts_pct)), 2) if bond_alts_pct else None,
+                "median_bond_alt_gbp_pct": round(float(np.median(bond_alts_pct)), 2) if bond_alts_pct else None,
+                "pct_paths_outperform_bond": round(
+                    sum(1 for s, b in zip(irrs_pct, bond_alts_pct) if s > b) / len(irrs_pct) * 100, 1
+                ) if bond_alts_pct else None,
             }
 
     return {

@@ -174,8 +174,8 @@ tr:hover td{background:var(--s2)}
 <div class="tab" id="tab-pareto">
   <p class="stitle">Pareto-Optimal Equilibrium</p>
   <div class="chart-card">
-    <h2>Investor GBP IRR vs Simulated Kenyan Bond Yield</h2>
-    <div class="desc">Scatter of Class B &amp; C GBP IRRs vs contemporaneous domestic bond yield. Points <strong>above</strong> parity line outperform KES bonds.</div>
+    <h2>Investor GBP IRR vs Bond GBP-Equivalent Return (Same Path)</h2>
+    <div class="desc">Scatter of Class B &amp; C GBP IRRs vs the <strong>GBP-equivalent return</strong> from a 16% KES bond on the <em>same depreciation path</em>. X-axis corrects for the actual realised FX loss — not the nominal 16% KES rate. Points <strong>above</strong> parity line: SPV outperforms the bond in GBP terms on that path.</div>
     <div id="ch-irr-bond" style="height:440px"></div>
   </div>
   <div class="chart-card"><h2>Tranche Summary &mdash; Pareto Table</h2><div id="pareto-table"></div></div>
@@ -185,7 +185,7 @@ tr:hover td{background:var(--s2)}
 <div class="tab" id="tab-irr">
   <p class="stitle">Investor IRR Distribution</p>
   <div class="g2">
-    <div class="chart-card"><h2>Class B &mdash; Annual GBP IRR</h2><div class="desc">P10/Median/P90. Red dotted = 16% KES bond benchmark.</div><div id="ch-irr-b" style="height:300px"></div><div id="irr-b-stats" class="kv-row" style="margin-top:10px"></div></div>
+    <div class="chart-card"><h2>Class B &mdash; Annual GBP IRR</h2><div class="desc">P10/Median/P90. Red dotted = <strong>mean bond GBP-equivalent yield at trigger</strong> (accounting for realised FX loss — typically negative, unlike the nominal 16% KES rate).</div><div id="ch-irr-b" style="height:300px"></div><div id="irr-b-stats" class="kv-row" style="margin-top:10px"></div></div>
     <div class="chart-card"><h2>Class C &mdash; Annual GBP IRR</h2><div class="desc">Higher patience, wider distribution.</div><div id="ch-irr-c" style="height:300px"></div><div id="irr-c-stats" class="kv-row" style="margin-top:10px"></div></div>
   </div>
 </div>
@@ -520,30 +520,37 @@ function renderMC(D){
 /* ── PARETO ── */
 function renderPareto(D){
   var mc=D.mc_aggregated||{},scatter=mc.irr_scatter_sample||[],pt=mc.pareto_frontier||[],byClass={};
-  scatter.forEach(function(d){if(!byClass[d["class"]])byClass[d["class"]]={x:[],y:[]};byClass[d["class"]].x.push(d.domestic_bond_yield_pct);byClass[d["class"]].y.push(d.irr_pct);});
+  scatter.forEach(function(d){if(!byClass[d["class"]])byClass[d["class"]]={x:[],y:[]};byClass[d["class"]].x.push(d.bond_alt_gbp_pct);byClass[d["class"]].y.push(d.irr_pct);});
   var clsCols={"Class B":"#58a6ff","Class C":"#bc8cff","Class_b":"#58a6ff","Class_c":"#bc8cff"};
   var traces=Object.entries(byClass).map(function(e){return {type:"scatter",mode:"markers",name:e[0],x:e[1].x,y:e[1].y,marker:{color:clsCols[e[0]]||"#58a6ff",size:4,opacity:0.35}};});
-  traces.push({type:"scatter",mode:"lines",name:"Parity",x:[0,60],y:[0,60],line:{color:"#f85149",width:1.5,dash:"dash"},showlegend:true});
-  Plotly.newPlot("ch-irr-bond",traces,PL({xaxis:{title:"Simulated Domestic Bond Yield (%)"},yaxis:{title:"Investor Annual GBP IRR (%)"}}),PC);
+  // Parity line: both axes are GBP IRR on the same path — points above = SPV beats bond in GBP terms
+  traces.push({type:"scatter",mode:"lines",name:"Parity (SPV = Bond)",x:[-60,20],y:[-60,20],line:{color:"#f85149",width:1.5,dash:"dash"},showlegend:true});
+  Plotly.newPlot("ch-irr-bond",traces,PL({xaxis:{title:"Bond GBP-Equivalent IRR on Same Path (%)"},yaxis:{title:"Investor Annual GBP IRR (%)"},annotations:[{xref:"paper",yref:"paper",x:0.01,y:0.99,text:"Points above parity: SPV outperforms KES bond in GBP terms",showarrow:false,font:{color:"#8b949e",size:10},xanchor:"left",yanchor:"top"}]}),PC);
   document.getElementById("pareto-table").innerHTML='<table><thead><tr><th>Tranche</th><th>Trigger</th><th>Probability</th><th>Mean IRR</th><th>P10</th><th>P90</th><th>Median Duration</th></tr></thead><tbody>'
     +pt.map(function(p){return "<tr><td><strong>"+p["class"]+"</strong></td><td>"+p.trigger_drop_pct+"%</td><td>"+fPct(p.trigger_probability_pct)+"</td><td style='color:#3fb950'>"+(p.mean_irr_pct!=null?fPct(p.mean_irr_pct):"--")+"</td><td>"+(p.p10_irr_pct!=null?fPct(p.p10_irr_pct):"--")+"</td><td>"+(p.p90_irr_pct!=null?fPct(p.p90_irr_pct):"--")+"</td><td>"+p.median_duration_months+" mo</td></tr>";}).join("")+"</tbody></table>";
 }
 
 /* ── IRR DISTRIBUTION ── */
 function renderIRR(D){
-  var bondYieldPct=(D.params&&D.params.kenya_bond_yield_base||0.16)*100;
   var hists=(D.mc_aggregated||{}).irr_histograms||{};
   [["class_b","b","#58a6ff"],["class_c","c","#bc8cff"]].forEach(function(arr){
     var cls=arr[0],suf=arr[1],col=arr[2],h=hists[cls];if(!h)return;
+    // Bond benchmark: GBP-equivalent return on the SAME depreciation path, NOT 16% KES nominal.
+    // Under typical trigger paths (25-75% drop), the KES bond actually returns NEGATIVE in GBP.
+    var bondRef=h.mean_bond_alt_gbp_pct!=null?h.mean_bond_alt_gbp_pct:null;
+    var shapes=[
+      {type:"line",x0:h.p10_pct,x1:h.p10_pct,y0:0,y1:1,xref:"x",yref:"paper",line:{color:"#ffa657",width:1,dash:"dash"}},
+      {type:"line",x0:h.median_pct,x1:h.median_pct,y0:0,y1:1,xref:"x",yref:"paper",line:{color:"#3fb950",width:2}},
+      {type:"line",x0:h.p90_pct,x1:h.p90_pct,y0:0,y1:1,xref:"x",yref:"paper",line:{color:"#ffa657",width:1,dash:"dash"}}];
+    var annotations=[];
+    if(bondRef!=null){
+      shapes.push({type:"line",x0:bondRef,x1:bondRef,y0:0,y1:1,xref:"x",yref:"paper",line:{color:"#f85149",width:1,dash:"dot"}});
+      annotations.push({x:bondRef,y:1,xref:"x",yref:"paper",text:"Bond GBP equiv ("+bondRef.toFixed(1)+"%)",showarrow:false,font:{color:"#f85149",size:10},xanchor:"left"});
+    }
     Plotly.newPlot("ch-irr-"+suf,[{x:h.bins,y:h.counts,type:"bar",marker:{color:col,opacity:0.8}}],
-      PL({shapes:[
-        {type:"line",x0:h.p10_pct,x1:h.p10_pct,y0:0,y1:1,xref:"x",yref:"paper",line:{color:"#ffa657",width:1,dash:"dash"}},
-        {type:"line",x0:h.median_pct,x1:h.median_pct,y0:0,y1:1,xref:"x",yref:"paper",line:{color:"#3fb950",width:2}},
-        {type:"line",x0:h.p90_pct,x1:h.p90_pct,y0:0,y1:1,xref:"x",yref:"paper",line:{color:"#ffa657",width:1,dash:"dash"}},
-        {type:"line",x0:bondYieldPct,x1:bondYieldPct,y0:0,y1:1,xref:"x",yref:"paper",line:{color:"#f85149",width:1,dash:"dot"}}],
-      annotations:[{x:bondYieldPct,y:1,xref:"x",yref:"paper",text:bondYieldPct+"% KE Bond",showarrow:false,font:{color:"#f85149",size:10},xanchor:"left"}],
-      xaxis:{title:"Annual GBP IRR (%)"},yaxis:{title:"Count"}}),PC);
-    document.getElementById("irr-"+suf+"-stats").innerHTML=[kv("Mean",fPct(h.mean_pct)),kv("Median",fPct(h.median_pct)),kv("P10",fPct(h.p10_pct)),kv("P90",fPct(h.p90_pct))].join("");
+      PL({shapes:shapes,annotations:annotations,xaxis:{title:"Annual GBP IRR (%)"},yaxis:{title:"Count"}}),PC);
+    var beatBond=h.pct_paths_outperform_bond!=null?kv("Beat Bond",h.pct_paths_outperform_bond+"% of paths"):"";
+    document.getElementById("irr-"+suf+"-stats").innerHTML=[kv("Mean",fPct(h.mean_pct)),kv("Median",fPct(h.median_pct)),kv("P10",fPct(h.p10_pct)),kv("P90",fPct(h.p90_pct)),beatBond].join("");
   });
 }
 
