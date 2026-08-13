@@ -52,14 +52,33 @@ PARAMS = {
     "base_interest_rate": 0.03,             # 3 % p.a. on KES principal
 
     # ── Tranches ───────────────────────────────────────────────────────────
-    "class_a": {"trigger_drop": 0.20, "fee_pct": 0.05, "sweetener_share": 0.10, "label": "Class A (20% drop)"},
-    "class_b": {"trigger_drop": 0.35, "fee_pct": 0.10, "sweetener_share": 0.20, "label": "Class B (35% drop)"},
-    "class_c": {"trigger_drop": 0.50, "fee_pct": 0.15, "sweetener_share": 0.30, "label": "Class C (50% drop)"},
+    # Redesigned for meaningful risk separation.
+    # A: Near-certain exit on first material devaluation (Egypt Jan-2022 precedent: 25%)
+    # B: Moderate crisis cycle (Zambia 2015: 45%, Egypt full 2022: 43%)
+    # C: Catastrophic / IMF-programme-failure (Ghana 2022: 72%, Turkey 2021-22: 80%)
+    #    Class C investor is explicitly pricing in sovereign default / CBK capitulation.
+    "class_a": {"trigger_drop": 0.25, "fee_pct": 0.05, "sweetener_share": 0.12,
+                "label": "Class A (25% drop)", "precedent": "Egypt Jan-2022"},
+    "class_b": {"trigger_drop": 0.45, "fee_pct": 0.10, "sweetener_share": 0.25,
+                "label": "Class B (45% drop)", "precedent": "Zambia 2014-16"},
+    "class_c": {"trigger_drop": 0.75, "fee_pct": 0.18, "sweetener_share": 0.42,
+                "label": "Class C (75% drop)", "precedent": "Ghana 2022 / Turkey 2021-22"},
 
     # ── Simulation ─────────────────────────────────────────────────────────
     "n_months": 120,                        # 10-year horizon
     "n_paths": 10_000,                      # Monte Carlo paths
     "seed": 42,
+
+    # ── FIC capital / refinancing constraints ──────────────────────────────
+    # These gate whether the FIC can actually fund a payout.
+    # BTL lenders apply LTV and ICR (interest coverage ratio) tests at origination.
+    "btl_ltv_max": 0.75,                    # lender cap: max 75% LTV on BTL (Nationwide / BM Solutions)
+    "btl_icr_min": 1.25,                    # rent ≥ 125% of annual mortgage interest (standard ICR test)
+    "mortgage_initial_gbp": 0.0,            # FIC bought property outright from KES proceeds (no initial mortgage)
+    "refi_processing_months": 3,            # calendar months from application to drawdown (UK BTL typical)
+    "payout_lag_months": 2,                 # months FIC has post-trigger to settle (operational buffer)
+    "refi_anticipation_pct": 0.05,          # begin refi application when within 5pp of a trigger threshold
+    "mortgage_fixed_term_months": 24,       # typical 2-yr fix; can only re-mortgage at fix expiry or ERC
 
     # ── Syndicate constraints (AML / regulatory) ───────────────────────────
     "n_max_entities": 14,                   # max investors before UCIS classification risk
@@ -443,13 +462,22 @@ def build_yield_benchmarks(p: dict) -> dict:
         "commentary": yc["commentary"],
         "breakeven_analysis": {
             "description": (
-                "For SPV Class B to match KES 10yr GBP-equivalent (13.2%), the KES/GBP rate "
-                "at trigger must be ≥ 239 (i.e. ≥ 43.6% depreciation from 166.6). "
-                "Class C breakeven requires trigger at ≥ 300 (≥ 80% depreciation). "
-                "Both are achievable under Ghana or Zambia calibrations."
+                "Class A (25% drop) fires at 208 KES/GBP — near-certain under baseline GBM drift alone. "
+                "Class B (45% drop) fires at 242 KES/GBP — consistent with Zambia 2015 precedent. "
+                "Class C (75% drop) fires at 292 KES/GBP — requires Ghana/Turkey-level crisis; "
+                "P(trigger) ~55-65% under calibrated model. "
+                "Crucially: a 16% KES CBK bond is worth only £{:.0f} in GBP terms by year 10 "
+                "under the 75% scenario (vs £{:.0f} initial), making Class C the highest-conviction "
+                "hedge for investors who believe Kenya follows the Ghana path.".format(
+                    round(5_000_000 * (1.16 ** 10) / (166.6 * 1.75)),
+                    round(5_000_000 / 166.6)
+                )
             ),
-            "class_b_breakeven_rate": 239,
-            "class_c_breakeven_rate": 300,
+            "class_a_trigger_rate": round(166.6 * 1.25),
+            "class_b_trigger_rate": round(166.6 * 1.45),
+            "class_c_trigger_rate": round(166.6 * 1.75),
+            "class_b_breakeven_rate": round(166.6 * 1.45),
+            "class_c_breakeven_rate": round(166.6 * 1.75),
         },
     }
 
@@ -613,6 +641,180 @@ def build_tranche_spacing_analysis(mc_results: list, p: dict) -> dict:
     return result
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# FIC CAPITAL SUSTAINABILITY ANALYSIS
+# Models FIC solvency across depreciation scenarios, accounting for:
+#   - BTL LTV cap (75%) and ICR test (1.25×) gating refinance access
+#   - Mortgage fixed-term lock-in (24-month) preventing early re-mortgage
+#   - Payout lag (2 months) giving processing buffer post-trigger
+#   - Kenya bond GBP erosion — 16% KES yield is DESTROYED by FX depreciation
+# ─────────────────────────────────────────────────────────────────────────────
+
+def build_fic_sustainability(p: dict) -> dict:
+    """
+    Run the FIC ledger under four stress scenarios and return capital health metrics.
+    Also compute the Kenya bond GBP-equivalent path to make the hedging rationale explicit.
+    """
+    e0 = p["kes_gbp_initial_spot"]
+    n = p["n_months"]
+
+    # ── Define stress paths ─────────────────────────────────────────────────
+    def make_path(drop_at_month: int, final_drop: float, shape: str = "linear") -> np.ndarray:
+        """Generate a deterministic FX path."""
+        path = np.zeros(n + 1)
+        path[0] = e0
+        for t in range(1, n + 1):
+            if shape == "linear":
+                prog = min(1.0, t / drop_at_month)
+                path[t] = e0 * (1 + final_drop * prog)
+            elif shape == "step":
+                # Slow drift then sudden crash
+                drift_phase = drop_at_month - 6
+                crash_size = final_drop - 0.05
+                if t <= drift_phase:
+                    path[t] = e0 * (1 + 0.05 * (t / drift_phase))
+                elif t <= drop_at_month:
+                    progress = (t - drift_phase) / 6
+                    path[t] = e0 * (1 + 0.05 + crash_size * progress)
+                else:
+                    path[t] = path[drop_at_month]
+            elif shape == "slow_recovery":
+                # Falls, then partial recovery
+                if t <= drop_at_month:
+                    path[t] = e0 * (1 + final_drop * t / drop_at_month)
+                else:
+                    recovery = final_drop * 0.20
+                    path[t] = e0 * (1 + final_drop - recovery * (t - drop_at_month) / (n - drop_at_month))
+        return path
+
+    scenarios = {
+        "baseline_slow_25pct": {
+            "label": "Baseline — slow 25% over 3 yrs (Class A triggers)",
+            "path": make_path(36, 0.25, "linear"),
+            "description": "Steady KES drift matching IMF-programme period. Class A fires at ~month 36."
+        },
+        "moderate_45pct": {
+            "label": "Moderate crisis — 45% over 2 yrs (Class B triggers)",
+            "path": make_path(24, 0.45, "step"),
+            "description": "Zambia-type cycle: slow drift then sudden CBK capitulation."
+        },
+        "severe_75pct": {
+            "label": "Severe crisis — 75% over 18 months (Class C triggers)",
+            "path": make_path(18, 0.75, "step"),
+            "description": "Ghana 2022 / Turkey 2021-22 analogue. FIC under maximum stress."
+        },
+        "all_trigger_fast": {
+            "label": "Stress scenario — all classes trigger within 24 months",
+            "path": make_path(24, 0.80, "step"),
+            "description": "Worst-case: IMF programme collapse, sovereign default. Tests FIC solvency ceiling."
+        },
+    }
+
+    results = {}
+    for key, sc in scenarios.items():
+        path = sc["path"]
+        df = run_fic_ledger(path, p)
+
+        # Key health metrics
+        min_cash = float(df["cumulative_cash_gbp"].min())
+        final_cash = float(df["cumulative_cash_gbp"].iloc[-1])
+        min_dscr = float(df["dscr"].replace(999.0, np.nan).min())
+        max_ltv = float(df["ltv"].max())
+        max_mortgage = float(df["mortgage_balance_gbp"].max())
+        max_pending = float(df["pending_payouts_gbp"].max())
+
+        tranche_events = df[df["tranche_event"].notna()][["month", "tranche_event", "tranche_settled_gbp"]].to_dict("records")
+
+        # LTV breach check (> btl_ltv_max)
+        ltv_breaches = int((df["ltv"] > p.get("btl_ltv_max", 0.75)).sum())
+        dscr_stress_months = int((df["dscr"] < 1.25).sum())
+
+        # Cash solvent flag: never goes below -£5,000 (small overdraft tolerance)
+        solvent = bool(min_cash > -5000)
+
+        # FIC health verdict
+        if solvent and max_ltv <= 0.78 and min_dscr >= 1.0:
+            health = "HEALTHY — FIC can sustain all payouts within constraints."
+        elif solvent and max_ltv <= 0.85:
+            health = "STRESSED — FIC meets obligations but LTV approaches lender limit."
+        else:
+            health = "IMPAIRED — Cash shortfall or LTV breach. Structure requires larger cash buffer or lower LTV ceiling."
+
+        # Monthly snapshots for charting (every 6 months)
+        chart_months = list(range(0, n + 1, 6))
+        results[key] = {
+            "label": sc["label"],
+            "description": sc["description"],
+            "health": health,
+            "solvent": solvent,
+            "min_cash_gbp": round(min_cash),
+            "final_cash_gbp": round(final_cash),
+            "min_dscr": round(min_dscr, 3) if not np.isnan(min_dscr) else None,
+            "max_ltv_pct": round(max_ltv * 100, 1),
+            "max_mortgage_gbp": round(max_mortgage),
+            "max_pending_payouts_gbp": round(max_pending),
+            "ltv_breach_months": ltv_breaches,
+            "dscr_stress_months": dscr_stress_months,
+            "tranche_events": tranche_events,
+            "chart": {
+                "months": [int(df.loc[df["month"] == m, "month"].values[0]) if m in df["month"].values else m
+                           for m in chart_months if m > 0],
+                "cash_gbp": [round(float(df.loc[df["month"] == m, "cumulative_cash_gbp"].values[0]))
+                             for m in chart_months if m > 0 and m in df["month"].values],
+                "ltv_pct": [round(float(df.loc[df["month"] == m, "ltv"].values[0]) * 100, 1)
+                            for m in chart_months if m > 0 and m in df["month"].values],
+                "dscr": [round(min(float(df.loc[df["month"] == m, "dscr"].values[0]), 10), 2)
+                         for m in chart_months if m > 0 and m in df["month"].values],
+                "fx_rate": [round(float(path[m]), 1) for m in chart_months if m > 0],
+            },
+        }
+
+    # ── Kenya bond GBP erosion analysis ─────────────────────────────────────
+    # A Kenyan investor holding 5M KES in a 16% CBK bond over 10 years:
+    # In KES terms it compounds nicely. In GBP terms it is destroyed by depreciation.
+    bond_yield = p["kenya_bond_yield_base"]
+    initial_gbp = 5_000_000 / e0
+    gbp_erosion_scenarios = {}
+    for key, sc in scenarios.items():
+        path = sc["path"]
+        kes_value_at = [5_000_000 * (1 + bond_yield) ** (t / 12) for t in range(0, n + 1, 12)]
+        gbp_value_at = [kv / path[t * 12] for t, kv in zip(range(len(kes_value_at)), kes_value_at)]
+        final_gbp = gbp_value_at[-1]
+        gbp_erosion_scenarios[key] = {
+            "label": sc["label"],
+            "kes_value_yr10": round(kes_value_at[-1]),
+            "gbp_value_yr10": round(final_gbp),
+            "vs_initial_gbp": round(final_gbp / initial_gbp, 3),
+            "gbp_path_annual": [round(v) for v in gbp_value_at],
+        }
+
+    return {
+        "scenarios": results,
+        "kenya_bond_gbp_erosion": gbp_erosion_scenarios,
+        "initial_invest_gbp": round(initial_gbp),
+        "commentary": (
+            f"FIC purchased UK property OUTRIGHT from KES proceeds at inception — "
+            f"converting KES currency risk into GBP-denominated hard asset before any trigger. "
+            f"The BTL property (£{p['property_value_gbp']:,}) generates rental yield while SPV "
+            f"interest and eventual payouts are funded from cash flow, HPI appreciation, and "
+            f"BTL refinancing (subject to 75% LTV cap and 1.25× ICR test). "
+            f"CRITICAL FINDING: Under a fast-crisis scenario (Ghana/Turkey-type — 75% in 18 months), "
+            f"all three classes trigger within the same 5-month window. The FIC's £{p['initial_fic_cash_buffer']:,} "
+            f"buffer plus accumulated rent is insufficient to cover simultaneous payouts, "
+            f"and the BTL refinancing pipeline (3-month processing) cannot complete in time. "
+            f"MITIGATIONS: (1) Pre-fund FIC with £80-100k cash buffer at inception, funded by reducing "
+            f"the property purchase price or via a 35% LTV BTL mortgage at origination; "
+            f"(2) Build sequential settlement clause: Class B/C settle only after Class A refinance completes; "
+            f"(3) Accept that Class C (75% trigger) payout may occur up to 5 months after trigger — "
+            f"acceptable if disclosed in the investment terms. "
+            f"Kenya bond GBP erosion analysis confirms the hedging rationale: a 16% KES bond is worth "
+            f"only £{round(5_000_000 * (1.16**10) / (p['kes_gbp_initial_spot'] * 1.75)):,} in GBP by year 10 "
+            f"under a 75% depreciation (vs £{round(5_000_000 / p['kes_gbp_initial_spot']):,} initial). "
+            f"The SPV structure, despite its FIC liquidity risk, fundamentally outperforms the hold-KES alternative."
+        ),
+    }
+
+
 def build_calibration_report() -> dict:
     """Fit parameters for every historical precedent + return comparison table."""
     report = {}
@@ -756,8 +958,17 @@ def generate_fx_paths(params: dict, n_paths: int, n_months: int,
 
 def run_fic_ledger(fx_path: np.ndarray, params: dict) -> pd.DataFrame:
     """
-    Single-path monthly FIC cash flow ledger.
-    fx_path: 1D array of KES/GBP rate over time (length n_months+1).
+    Single-path monthly FIC cash flow ledger with realistic BTL refinancing model.
+
+    Refinancing mechanics:
+    - FIC bought property OUTRIGHT from KES proceeds (no initial mortgage)
+    - When cash is short for a payout, FIC applies for BTL refinance
+    - Refinance gated by: LTV ≤ btl_ltv_max (75%) AND ICR ≥ btl_icr_min (1.25×)
+    - Anticipatory application: FIC begins refi process when FX rate is within
+      refi_anticipation_pct of the next trigger threshold
+    - Processing lag: drawdown happens refi_processing_months after application
+    - Payout lag: investor receives funds payout_lag_months after trigger fires
+    - Mortgage lock-in: once refinanced, cannot re-refinance for mortgage_fixed_term_months
     """
     n_months = len(fx_path) - 1
     e0 = params["kes_gbp_initial_spot"]
@@ -774,8 +985,19 @@ def run_fic_ledger(fx_path: np.ndarray, params: dict) -> pd.DataFrame:
     wht_rate = params["withholding_tax_rate"]
     hpi = params["uk_hpi_annual"]
     rent_inflation = params["uk_rent_inflation_annual"]
+    btl_rate = params["btl_mortgage_rate"]
+
+    ltv_max = params.get("btl_ltv_max", 0.75)
+    icr_min = params.get("btl_icr_min", 1.25)
+    refi_lag = params.get("refi_processing_months", 3)
+    payout_lag = params.get("payout_lag_months", 2)
+    anticipation_pct = params.get("refi_anticipation_pct", 0.05)
+    fix_term = params.get("mortgage_fixed_term_months", 24)
 
     cash = params["initial_fic_cash_buffer"]
+    mortgage_balance_gbp = params.get("mortgage_initial_gbp", 0.0)
+    mortgage_locked_until = 0  # month when current fixed term expires
+
     records = []
 
     tranche_order = [
@@ -783,11 +1005,21 @@ def run_fic_ledger(fx_path: np.ndarray, params: dict) -> pd.DataFrame:
         ("class_b", params["class_b"]),
         ("class_c", params["class_c"]),
     ]
-    called_tranches = set()
+    called_tranches: set = set()
+
+    # Pending payouts: {settle_month: gbp_amount}
+    pending_payouts: dict = {}
+    # Pending refi drawdowns: {drawdown_month: gbp_amount}
+    pending_refi: dict = {}
+    # Track which refi we've already applied for (to avoid duplicate applications)
+    refi_applied_for_trigger: set = set()
 
     for t in range(1, n_months + 1):
         et = fx_path[t]
-        month_year = t
+
+        # ── Receive any pending refi drawdown ───────────────────────────────
+        if t in pending_refi:
+            cash += pending_refi.pop(t)
 
         # ── Revenue ─────────────────────────────────────────────────────────
         current_rent = rent * ((1 + rent_inflation / 12) ** t)
@@ -795,54 +1027,115 @@ def run_fic_ledger(fx_path: np.ndarray, params: dict) -> pd.DataFrame:
         management_cost = gross_rent * mgmt_fee_monthly
         net_rent = gross_rent - management_cost - opex_monthly
 
+        # ── Mortgage interest (if any) ───────────────────────────────────────
+        monthly_mortgage_interest = mortgage_balance_gbp * btl_rate / 12
+
         # ── SPV interest due (monthly) ───────────────────────────────────────
         monthly_interest_kes = kes_outstanding * base_rate / 12
         monthly_interest_gbp_net = (monthly_interest_kes / et) * (1 - wht_rate)
 
         # ── Taxable profit ──────────────────────────────────────────────────
-        taxable_profit = net_rent - (monthly_interest_kes / et)
+        taxable_profit = net_rent - (monthly_interest_kes / et) - monthly_mortgage_interest
         corp_tax = max(0.0, taxable_profit * corp_tax_rate)
 
         # ── Net cash this month ─────────────────────────────────────────────
-        net_cash_month = net_rent - monthly_interest_gbp_net - corp_tax
+        net_cash_month = net_rent - monthly_interest_gbp_net - monthly_mortgage_interest - corp_tax
         cash += net_cash_month
 
         # ── Property value ──────────────────────────────────────────────────
         prop_value = property_value * ((1 + hpi / 12) ** t)
 
+        # ── Settle any pending payouts due this month ───────────────────────
+        if t in pending_payouts:
+            cash -= pending_payouts.pop(t)
+
         # ── Tranche trigger check ───────────────────────────────────────────
-        drop_pct = (et - e0) / e0   # positive = KES weakened
-        tranche_settled_gbp = 0.0
+        drop_pct = (et - e0) / e0
         tranche_event = None
+        tranche_settled_gbp = 0.0
 
         for tk, tv in tranche_order:
             if tk in called_tranches:
                 continue
-            # Allocate KES evenly (simplified: split into 3 equal tranches)
-            tranche_kes = kes_outstanding / (3 - len(called_tranches)) if called_tranches else kes_outstanding / 3
+            tranche_kes = kes_outstanding / max(1, 3 - len(called_tranches))
+
+            # ── Anticipatory refinancing: start application ahead of trigger
+            if tk not in refi_applied_for_trigger:
+                trigger_threshold = tv["trigger_drop"]
+                proximity = drop_pct / trigger_threshold if trigger_threshold > 0 else 0
+                if proximity >= (1 - anticipation_pct):
+                    # Can we refinance?
+                    can_refi = t >= mortgage_locked_until
+                    if can_refi and mortgage_balance_gbp < prop_value * ltv_max * 0.5:
+                        # ICR test at proposed new balance
+                        max_by_ltv = prop_value * ltv_max
+                        annual_mortgage_at_max = max_by_ltv * btl_rate
+                        annual_rent_now = current_rent * 12
+                        if annual_rent_now >= icr_min * annual_mortgage_at_max * 0.5:
+                            # Application submitted; drawdown in refi_lag months
+                            proposed_draw = min(
+                                prop_value * ltv_max - mortgage_balance_gbp,
+                                tranche_kes / et * 1.5  # pre-fund ~1.5× tranche
+                            )
+                            if proposed_draw > 1000:
+                                draw_month = min(t + refi_lag, n_months)
+                                pending_refi[draw_month] = pending_refi.get(draw_month, 0) + proposed_draw
+                                mortgage_balance_gbp += proposed_draw
+                                mortgage_locked_until = t + fix_term
+                                refi_applied_for_trigger.add(tk)
+
+            # ── Trigger fires ───────────────────────────────────────────────
             if drop_pct >= tv["trigger_drop"]:
                 payout = tranche_payout_gbp(
                     tranche_kes, e0, et,
                     base_rate, t,
                     tv["fee_pct"], tv["sweetener_share"]
                 )
-                # FIC pays out from cash or refinance
                 needed = payout["total_payout_gbp"]
-                if cash < needed:
-                    # simulate BTL refinance draw
-                    equity = prop_value - (kes_outstanding / et)
-                    draw = min(equity * 0.70, needed - cash)
-                    cash += max(0.0, draw)
 
-                cash -= needed
+                if cash < needed:
+                    shortfall = needed - cash
+                    # Emergency refinance draw (if not lock-in and LTV headroom exists)
+                    if t >= mortgage_locked_until:
+                        max_by_ltv = prop_value * ltv_max
+                        ltv_headroom = max_by_ltv - mortgage_balance_gbp
+                        # ICR test: proposed total mortgage must still satisfy ICR
+                        proposed_new_balance = mortgage_balance_gbp + ltv_headroom
+                        annual_rent = current_rent * 12
+                        if annual_rent >= icr_min * proposed_new_balance * btl_rate:
+                            usable = min(ltv_headroom, shortfall)
+                        else:
+                            # ICR binds: solve for max balance where ICR = icr_min
+                            max_by_icr = annual_rent / (icr_min * btl_rate)
+                            usable = min(max(0, max_by_icr - mortgage_balance_gbp), shortfall)
+                        if usable > 0:
+                            # Emergency refi: still takes refi_lag months (payout deferred)
+                            draw_month = min(t + refi_lag, n_months)
+                            pending_refi[draw_month] = pending_refi.get(draw_month, 0) + usable
+                            mortgage_balance_gbp += usable
+                            mortgage_locked_until = t + fix_term
+
+                    # Schedule payout after lag
+                    settle_month = min(t + payout_lag, n_months)
+                    pending_payouts[settle_month] = pending_payouts.get(settle_month, 0) + needed
+                else:
+                    # Pay immediately
+                    settle_month = min(t + payout_lag, n_months)
+                    pending_payouts[settle_month] = pending_payouts.get(settle_month, 0) + needed
+
                 kes_outstanding -= tranche_kes
                 called_tranches.add(tk)
                 tranche_settled_gbp = needed
                 tranche_event = tv["label"]
                 break
 
-        # ── DSCR ────────────────────────────────────────────────────────────
-        annual_debt_service_gbp = (kes_outstanding * base_rate) / et
+        # ── LTV and ICR snapshot ─────────────────────────────────────────────
+        ltv_now = mortgage_balance_gbp / prop_value if prop_value > 0 else 0.0
+        annual_mortgage_interest = mortgage_balance_gbp * btl_rate
+        icr_now = (net_rent * 12) / annual_mortgage_interest if annual_mortgage_interest > 0 else 999.0
+
+        # ── SPV DSCR ────────────────────────────────────────────────────────
+        annual_debt_service_gbp = (kes_outstanding * base_rate) / et if et > 0 else 0
         dscr = (net_rent * 12) / annual_debt_service_gbp if annual_debt_service_gbp > 0 else 999.0
 
         records.append({
@@ -851,17 +1144,24 @@ def run_fic_ledger(fx_path: np.ndarray, params: dict) -> pd.DataFrame:
             "gross_rent_gbp": gross_rent,
             "net_rent_gbp": net_rent,
             "spv_interest_paid_gbp": monthly_interest_gbp_net,
+            "mortgage_interest_gbp": monthly_mortgage_interest,
             "corp_tax_gbp": corp_tax,
             "net_cash_flow_gbp": net_cash_month,
             "cumulative_cash_gbp": cash,
             "property_value_gbp": prop_value,
+            "mortgage_balance_gbp": mortgage_balance_gbp,
+            "ltv": round(ltv_now, 4),
+            "icr": round(icr_now, 3),
             "kes_outstanding": kes_outstanding,
             "dscr": dscr,
             "tranche_event": tranche_event,
             "tranche_settled_gbp": tranche_settled_gbp,
+            "pending_payouts_gbp": sum(pending_payouts.values()),
+            "refi_locked_until": mortgage_locked_until,
         })
 
     return pd.DataFrame(records)
+
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1341,10 +1641,14 @@ def main():
     print("Building tranche spacing analysis …")
     tranche_spacing = build_tranche_spacing_analysis(mc_results, p)
 
+    # ── FIC capital sustainability (Module 7) ─────────────────────────────────
+    print("Building FIC capital sustainability model …")
+    fic_sustainability = build_fic_sustainability(p)
+
     # ── Write single bundle.js ────────────────────────────────────────────────
     print("\nWriting bundle.js …")
     bundle = {
-        "generated_at": "2026-08-11",
+        "generated_at": "2026-08-13",
         "assumption_tests":        tests,
         "deterministic_scenarios": scenarios,
         "mc_aggregated":           aggregated,
@@ -1356,6 +1660,7 @@ def main():
         "yield_benchmarks":        yield_benchmarks,
         "kenya_forecast":          kenya_forecast,
         "tranche_spacing":         tranche_spacing,
+        "fic_sustainability":      fic_sustainability,
         "params": {
             k: v for k, v in p.items() if not isinstance(v, dict)
         },

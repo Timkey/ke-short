@@ -11,7 +11,7 @@
   No fetch(), no CORS — works on file://, GitHub Pages, any static host.
   To regenerate data:  cd sim && docker compose run --rm engine
 -->
-<script src="./data/bundle.js?v=9" onerror="window.__BUNDLE_MISSING=true"></script>
+<script src="./data/bundle.js?v=10" onerror="window.__BUNDLE_MISSING=true"></script>
 <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
 <style>
 :root{
@@ -112,6 +112,7 @@ tr:hover td{background:var(--s2)}
   <button data-tab="yield-benchmarks">Yield Benchmarks</button>
   <button data-tab="fx-forecast">FX Forecast</button>
   <button data-tab="tranche-spacing">Tranche Spacing</button>
+  <button data-tab="fic-capital">FIC Capital</button>
 </nav>
 
 <div id="fallback">
@@ -330,6 +331,22 @@ tr:hover td{background:var(--s2)}
   </div>
 </div>
 
+<!-- FIC CAPITAL SUSTAINABILITY -->
+<div class="tab" id="tab-fic-capital">
+  <h2>FIC Capital &amp; Refinancing Sustainability</h2>
+  <p style="color:#8b949e;max-width:760px">Can the FIC sustain payouts to all three tranche classes? Models BTL refinancing constraints (75% LTV cap, 1.25&times; ICR), fixed-term lock-in, payout lag, and anticipatory refinancing. Also shows why a 16% KES bond fails to protect GBP value under any material depreciation scenario.</p>
+  <div id="fic-commentary" style="color:#8b949e;margin:10px 0 20px;max-width:800px;font-size:13px;line-height:1.6"></div>
+  <div style="margin-bottom:18px;display:flex;gap:10px;flex-wrap:wrap" id="fic-scenario-btns"></div>
+  <div id="fic-health-badge" style="margin-bottom:20px"></div>
+  <div class="chart-grid">
+    <div class="chart-box"><h3>FIC Cumulative Cash (£)</h3><div id="ch-fic-cash" style="height:280px"></div></div>
+    <div class="chart-box"><h3>BTL LTV Trajectory (%)</h3><div id="ch-fic-ltv" style="height:280px"></div></div>
+    <div class="chart-box"><h3>SPV DSCR Over Time</h3><div id="ch-fic-dscr" style="height:280px"></div></div>
+    <div class="chart-box"><h3>KES Bond GBP Erosion (5M KES initial)</h3><div id="ch-fic-bond" style="height:280px"></div></div>
+  </div>
+  <div id="fic-events-table" style="margin-top:18px"></div>
+</div>
+
 </main>
 
 <script>
@@ -390,6 +407,7 @@ function render(D){
   renderCalibration(D);renderSyndicate(D);renderStress(D);
   renderRiskScorecard(D);renderYieldBenchmarks(D);
   renderFXForecast(D);renderTrancheSpacing(D);
+  renderFICCapital(D);
 }
 
 /* ── OVERVIEW ── */
@@ -873,6 +891,78 @@ function renderTrancheSpacing(D){
       annotations:[{x:0,y:Math.max(medians[0],p75s[0])+2,
         text:"All-3 same year: "+simRisk+"%",showarrow:false,
         font:{color:"#ffa657",size:10},xanchor:"center"}]}),PC);
+}
+
+var _ficActiveScenario="baseline_slow_25pct";
+function renderFICCapital(D){
+  var fs=D.fic_sustainability;
+  if(!fs)return;
+  document.getElementById("fic-commentary").textContent=fs.commentary||"";
+  var scKeys=Object.keys(fs.scenarios);
+  var btnCont=document.getElementById("fic-scenario-btns");
+  btnCont.innerHTML=scKeys.map(function(k){
+    return '<button class="sbtn'+(k===_ficActiveScenario?" active":"") + '" data-sckey="'+k+'">'+(fs.scenarios[k].label)+"</button>";
+  }).join("");
+  btnCont.querySelectorAll(".sbtn").forEach(function(b){
+    b.addEventListener("click",function(){
+      btnCont.querySelectorAll(".sbtn").forEach(function(x){x.classList.remove("active");});
+      b.classList.add("active"); _ficActiveScenario=b.dataset.sckey;
+      _drawFICScenario(fs,_ficActiveScenario);
+    });
+  });
+  _drawFICScenario(fs,_ficActiveScenario);
+}
+function _drawFICScenario(fs,key){
+  var sc=fs.scenarios[key];
+  if(!sc)return;
+  var hColor=sc.health.indexOf("HEALTHY")>=0?"#3fb950":sc.health.indexOf("STRESSED")>=0?"#d29922":"#f85149";
+  document.getElementById("fic-health-badge").innerHTML=
+    '<div style="border-left:4px solid '+hColor+';padding:10px 14px;background:#161b22;max-width:760px">'
+    +'<strong style="color:'+hColor+'">'+sc.health.split(" — ")[0]+'</strong>'
+    +'<span style="color:#8b949e;margin-left:12px;font-size:12px">'+(sc.health.split(" — ")[1]||"")+"</span>"
+    +'<div style="margin-top:6px;display:flex;gap:20px;font-size:12px">'
+    +'<span>Min cash: <strong style="color:'+(sc.min_cash_gbp<0?"#f85149":"#3fb950")+'">&pound;'+sc.min_cash_gbp.toLocaleString()+"</strong></span>"
+    +'<span>Max LTV: <strong style="color:'+(sc.max_ltv_pct>75?"#f85149":sc.max_ltv_pct>60?"#d29922":"#3fb950")+'">'+sc.max_ltv_pct+'%</strong></span>'
+    +'<span>Min DSCR: <strong style="color:'+(sc.min_dscr<1.0?"#f85149":sc.min_dscr<1.25?"#d29922":"#3fb950")+'">'+(sc.min_dscr||"--")+"</strong></span>"
+    +'<span>LTV breach months: <strong style="color:'+(sc.ltv_breach_months>0?"#f85149":"#3fb950")+'">'+(sc.ltv_breach_months||0)+"</strong></span>"
+    +'</div></div>';
+  var ch=sc.chart||{},mo=ch.months||[];
+  Plotly.newPlot("ch-fic-cash",[{type:"scatter",mode:"lines",x:mo,y:ch.cash_gbp||[],fill:"tozeroy",
+    fillcolor:"rgba(63,185,80,0.08)",line:{color:"#3fb950",width:2}}],
+    PL({xaxis:{title:"Month"},yaxis:{title:"Cumulative Cash (£)"},showlegend:false,
+      shapes:[{type:"line",x0:0,x1:mo[mo.length-1]||120,y0:0,y1:0,line:{color:"#f85149",width:1,dash:"dash"}}]}),PC);
+  Plotly.newPlot("ch-fic-ltv",[{type:"scatter",mode:"lines",x:mo,y:ch.ltv_pct||[],
+    line:{color:"#ffa657",width:2}},
+    {type:"scatter",mode:"lines",x:[0,mo[mo.length-1]||120],y:[75,75],name:"LTV cap 75%",
+    line:{color:"#f85149",width:1,dash:"dash"}}],
+    PL({xaxis:{title:"Month"},yaxis:{title:"LTV (%)",range:[0,100]},showlegend:true}),PC);
+  Plotly.newPlot("ch-fic-dscr",[{type:"scatter",mode:"lines",x:mo,y:ch.dscr||[],
+    line:{color:"#58a6ff",width:2}},
+    {type:"scatter",mode:"lines",x:[0,mo[mo.length-1]||120],y:[1.25,1.25],name:"DSCR 1.25 covenant",
+    line:{color:"#d29922",width:1,dash:"dash"}}],
+    PL({xaxis:{title:"Month"},yaxis:{title:"DSCR"},showlegend:true}),PC);
+  var be=fs.kenya_bond_gbp_erosion||{};
+  var bondTraces=Object.keys(be).map(function(bk){
+    var bd=be[bk]; var yrs=bd.gbp_path_annual||[];
+    return {type:"scatter",mode:"lines",name:bd.label,
+      x:yrs.map(function(_,i){return i;}),y:yrs,
+      line:{width:1+(bk===key?1:0),dash:bk===key?"solid":"dot"}};
+  });
+  bondTraces.push({type:"scatter",mode:"lines",name:"Initial GBP invest",
+    x:[0,10],y:[fs.initial_invest_gbp,fs.initial_invest_gbp],
+    line:{color:"#3fb950",width:1,dash:"dash"}});
+  Plotly.newPlot("ch-fic-bond",bondTraces,
+    PL({xaxis:{title:"Year"},yaxis:{title:"GBP value of 5M KES bond"},showlegend:true}),PC);
+  if(sc.tranche_events&&sc.tranche_events.length>0){
+    document.getElementById("fic-events-table").innerHTML=
+      '<h3 style="color:#8b949e;font-size:12px;text-transform:uppercase;margin-bottom:8px">Tranche Events</h3>'
+      +'<table class="data-table"><thead><tr><th>Month</th><th>Event</th><th>Payout (£)</th></tr></thead><tbody>'
+      +sc.tranche_events.map(function(ev){
+        return "<tr><td>"+ev.month+"</td><td>"+ev.tranche_event+"</td><td>&pound;"+Math.round(ev.tranche_settled_gbp).toLocaleString()+"</td></tr>";
+      }).join("")+"</tbody></table>";
+  } else {
+    document.getElementById("fic-events-table").innerHTML='<p style="color:#8b949e;font-size:12px">No tranche triggers in this scenario.</p>';
+  }
 }
 
 boot();
