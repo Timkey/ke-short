@@ -11,7 +11,7 @@
   No fetch(), no CORS — works on file://, GitHub Pages, any static host.
   To regenerate data:  cd sim && docker compose run --rm engine
 -->
-<script src="./data/bundle.js?v=10" onerror="window.__BUNDLE_MISSING=true"></script>
+<script src="./data/bundle.js?v=11" onerror="window.__BUNDLE_MISSING=true"></script>
 <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
 <style>
 :root{
@@ -422,8 +422,8 @@ function renderOverview(D){
     ((cf.spv_class_b_mean_gbp-cf.hold_in_kenya_mean_gbp)/cf.hold_in_kenya_mean_gbp*100).toFixed(1):"--";
   document.getElementById("kpi-row").innerHTML=[
     {l:"Total Raise",big:"70M KES",sub:"≈ "+fGBP(cf.initial_gbp_value)+" at inception"},
-    {l:"Class B Trigger",big:fPct(tb.probability_pct),sub:"35% devaluation (£1 ≈ 256 KES)"},
-    {l:"Class C Trigger",big:fPct(tc.probability_pct),sub:"50% devaluation (£1 ≈ 333 KES)"},
+    {l:"Class B Trigger",big:fPct(tb.probability_pct),sub:Math.round((D.tranche_params&&D.tranche_params.class_b?D.tranche_params.class_b.trigger_drop:0.45)*100)+"% devaluation (£1 ≈ "+Math.round((D.params&&D.params.kes_gbp_initial_spot||166.6)*(1+(D.tranche_params&&D.tranche_params.class_b?D.tranche_params.class_b.trigger_drop:0.45)))+" KES)"},
+    {l:"Class C Trigger",big:fPct(tc.probability_pct),sub:Math.round((D.tranche_params&&D.tranche_params.class_c?D.tranche_params.class_c.trigger_drop:0.75)*100)+"% devaluation (£1 ≈ "+Math.round((D.params&&D.params.kes_gbp_initial_spot||166.6)*(1+(D.tranche_params&&D.tranche_params.class_c?D.tranche_params.class_c.trigger_drop:0.75)))+" KES)"},
     {l:"SPV vs Hold-Kenya",big:uplift+"%",sub:"Class B mean exit vs hold-KES"}
   ].map(function(d){return '<div class="card"><h3>'+d.l+'</h3><div class="big">'+d.big+'</div><div class="sub">'+d.sub+'</div></div>';}).join("");
   var tsByKey={class_a:ta,class_b:tb,class_c:tc};
@@ -531,6 +531,7 @@ function renderPareto(D){
 
 /* ── IRR DISTRIBUTION ── */
 function renderIRR(D){
+  var bondYieldPct=(D.params&&D.params.kenya_bond_yield_base||0.16)*100;
   var hists=(D.mc_aggregated||{}).irr_histograms||{};
   [["class_b","b","#58a6ff"],["class_c","c","#bc8cff"]].forEach(function(arr){
     var cls=arr[0],suf=arr[1],col=arr[2],h=hists[cls];if(!h)return;
@@ -539,8 +540,8 @@ function renderIRR(D){
         {type:"line",x0:h.p10_pct,x1:h.p10_pct,y0:0,y1:1,xref:"x",yref:"paper",line:{color:"#ffa657",width:1,dash:"dash"}},
         {type:"line",x0:h.median_pct,x1:h.median_pct,y0:0,y1:1,xref:"x",yref:"paper",line:{color:"#3fb950",width:2}},
         {type:"line",x0:h.p90_pct,x1:h.p90_pct,y0:0,y1:1,xref:"x",yref:"paper",line:{color:"#ffa657",width:1,dash:"dash"}},
-        {type:"line",x0:16,x1:16,y0:0,y1:1,xref:"x",yref:"paper",line:{color:"#f85149",width:1,dash:"dot"}}],
-      annotations:[{x:16,y:1,xref:"x",yref:"paper",text:"16% KE Bond",showarrow:false,font:{color:"#f85149",size:10},xanchor:"left"}],
+        {type:"line",x0:bondYieldPct,x1:bondYieldPct,y0:0,y1:1,xref:"x",yref:"paper",line:{color:"#f85149",width:1,dash:"dot"}}],
+      annotations:[{x:bondYieldPct,y:1,xref:"x",yref:"paper",text:bondYieldPct+"% KE Bond",showarrow:false,font:{color:"#f85149",size:10},xanchor:"left"}],
       xaxis:{title:"Annual GBP IRR (%)"},yaxis:{title:"Count"}}),PC);
     document.getElementById("irr-"+suf+"-stats").innerHTML=[kv("Mean",fPct(h.mean_pct)),kv("Median",fPct(h.median_pct)),kv("P10",fPct(h.p10_pct)),kv("P90",fPct(h.p90_pct))].join("");
   });
@@ -552,7 +553,7 @@ function renderCapitalFlight(D){
   var uplift=(cf.spv_class_b_mean_gbp&&cf.hold_in_kenya_mean_gbp)?
     ((cf.spv_class_b_mean_gbp-cf.hold_in_kenya_mean_gbp)/cf.hold_in_kenya_mean_gbp*100).toFixed(1):"--";
   document.getElementById("cf-kpis").innerHTML=[
-    {l:"Initial GBP Value",big:fGBP(cf.initial_gbp_value),sub:"70M KES at £1=166.6"},
+    {l:"Initial GBP Value",big:fGBP(cf.initial_gbp_value),sub:"70M KES at £1="+(D.params&&D.params.kes_gbp_initial_spot||166.6)},
     {l:"SPV Class B (mean)",big:fGBP(cf.spv_class_b_mean_gbp),sub:"GBP received at trigger"},
     {l:"Hold-in-Kenya (mean)",big:fGBP(cf.hold_in_kenya_mean_gbp),sub:"KES bonds FX-converted"},
     {l:"SPV Outperformance",big:"+"+uplift+"%",sub:"vs hold-in-Kenya"}
@@ -570,8 +571,10 @@ function renderFXPaths(D){
   var paths=D.sample_fx_paths,e0=D.params.kes_gbp_initial_spot,months=[];
   for(var i=0;i<paths[0].rates.length;i++)months.push(i);
   var traces=paths.map(function(p){return {x:months,y:p.rates,type:"scatter",mode:"lines",line:{color:"rgba(88,166,255,0.07)",width:1},showlegend:false,hoverinfo:"skip"};});
-  [[0.20,"#ffa657","A (20%)"],[0.35,"#58a6ff","B (35%)"],[0.50,"#bc8cff","C (50%)"]].forEach(function(arr){
-    traces.push({type:"scatter",mode:"lines",x:[0,months.length-1],y:[e0*(1+arr[0]),e0*(1+arr[0])],line:{color:arr[1],width:1.5,dash:"dash"},name:"Class "+arr[2]});
+  var tp=D.tranche_params||{};
+  [[tp.class_a||{},"#ffa657","A"],[tp.class_b||{},"#58a6ff","B"],[tp.class_c||{},"#bc8cff","C"]].forEach(function(arr){
+    var td=arr[0],drop=td.trigger_drop||0;
+    traces.push({type:"scatter",mode:"lines",x:[0,months.length-1],y:[e0*(1+drop),e0*(1+drop)],line:{color:arr[1],width:1.5,dash:"dash"},name:"Class "+arr[2]+" ("+Math.round(drop*100)+"%)"}); 
   });
   var med=months.map(function(m){var v=paths.map(function(p){return p.rates[m];}).sort(function(a,b){return a-b;});return v[Math.floor(v.length/2)];});
   traces.push({x:months,y:med,type:"scatter",mode:"lines",name:"Median",line:{color:"#e6edf3",width:2.5}});
@@ -661,12 +664,12 @@ var STRESS_DEF=[
   {key:"base_interest_rate",label:"Base Interest Rate (%)",min:1,max:8,step:0.25,unit:"%"},
   {key:"uk_corp_tax_rate",label:"UK Corp Tax Rate (%)",min:15,max:30,step:1,unit:"%"},
   {key:"management_fee_pct",label:"Mgmt Fee (% rent)",min:5,max:25,step:0.5,unit:"%"},
-  {key:"a_trigger",label:"Class A Trigger (%)",min:10,max:30,step:1,unit:"%"},
+  {key:"a_trigger",label:"Class A Trigger (%)",min:10,max:40,step:1,unit:"%"},
   {key:"a_sweetener",label:"Class A Sweetener (%)",min:5,max:25,step:1,unit:"%"},
-  {key:"b_trigger",label:"Class B Trigger (%)",min:25,max:50,step:1,unit:"%"},
+  {key:"b_trigger",label:"Class B Trigger (%)",min:25,max:60,step:1,unit:"%"},
   {key:"b_sweetener",label:"Class B Sweetener (%)",min:10,max:40,step:1,unit:"%"},
-  {key:"c_trigger",label:"Class C Trigger (%)",min:40,max:70,step:1,unit:"%"},
-  {key:"c_sweetener",label:"Class C Sweetener (%)",min:15,max:50,step:1,unit:"%"}
+  {key:"c_trigger",label:"Class C Trigger (%)",min:50,max:95,step:1,unit:"%"},
+  {key:"c_sweetener",label:"Class C Sweetener (%)",min:15,max:55,step:1,unit:"%"}
 ];
 var stressVals={},stressD=null;
 function getDefaults(D){
@@ -745,7 +748,8 @@ function calcStress(D){
     });
     return {x:months,y:ys,type:"scatter",mode:"lines",name:"Class "+t.key,line:{color:t.col,width:2}};
   });
-  irrCurves.push({type:"scatter",mode:"lines",x:[0,120],y:[16,16],name:"KE Bond 16%",line:{color:"#f85149",width:1,dash:"dash"}});
+  var bondYieldPct2=(stressD&&stressD.params&&stressD.params.kenya_bond_yield_base||0.16)*100;
+  irrCurves.push({type:"scatter",mode:"lines",x:[0,120],y:[bondYieldPct2,bondYieldPct2],name:"KE Bond "+bondYieldPct2+"%",line:{color:"#f85149",width:1,dash:"dash"}});
   Plotly.newPlot("ch-stress-irr-curve",irrCurves,PL({xaxis:{title:"Month of Trigger"},yaxis:{title:"Annual GBP IRR (%)"},showlegend:true}),PC);
   Plotly.newPlot("ch-stress-split",[
     {type:"bar",name:"Investor Sweetener",x:tr.map(function(t){return "Class "+t.key;}),y:tr.map(function(t){return t.sfx;}),marker:{color:"#3fb950"}},
