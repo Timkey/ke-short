@@ -340,20 +340,13 @@ KENYA_YIELD_CURVE = {
         "KENINT_2032": 10.2,
     },
     "gbp_equivalent": {
-        # GBP-equivalent = USD yield + GBP/USD basis + KES/GBP expected depreciation
-        # Expected KES/GBP depreciation ≈ GBM drift 5%/yr → reduces GBP value
-        # GBP equivalent of 10yr KES bond ≈ 18.2% KES - 5% FX expected loss = ~13.2% GBP
-        "10yr_kes_bond_gbp_equiv": 13.2,
-        "10yr_eurobond_gbp_equiv": 10.8,    # USD yield + GBP/USD basis adj
+        # NOTE: these are computed in build_yield_benchmarks() from actual model params.
+        # The values below are placeholder only — never used directly in output.
+        # Proper calculation uses: gbp_equiv = (1 + kes_yield) / (1 + annual_depr) - 1
+        # where annual_depr is derived from GBM drift + expected jump component.
         "uk_gilt_10yr": 4.2,
         "uk_hy_corp_10yr": 7.8,
     },
-    "commentary": (
-        "Kenya's domestic yield curve is steep and elevated due to high fiscal deficits "
-        "and IMF programme conditionality. The 91-day T-bill has declined from 17%+ peaks "
-        "as disinflation takes hold. GBP-equivalent returns adjust for expected 5%/yr KES "
-        "depreciation. SPV tranches must deliver > 13.2% GBP-equivalent to beat domestic bonds."
-    ),
 }
 
 
@@ -413,71 +406,165 @@ def build_structural_risk() -> dict:
 
 
 def build_yield_benchmarks(p: dict) -> dict:
-    """Build IRR-vs-benchmark comparison table from yield curve data."""
+    """
+    Build IRR-vs-benchmark comparison table with CORRECT currency-adjusted returns.
+
+    GBP-equivalent annual return from a KES instrument:
+        gbp_equiv = (1 + kes_yield) / (1 + annual_depr) - 1
+
+    We compute under FOUR depreciation scenarios from the actual model parameters:
+      1. GBM drift only (5%/yr) — best case, no jumps occur
+      2. Expected full model — GBM drift + E[jumps] = drift + lambda * mean_jump
+      3. Class A trigger horizon — 25% over median 20 months ≈ 15%/yr annualised
+      4. Class C trigger horizon — 75% over median 40 months ≈ 22.5%/yr annualised
+
+    The dashboard should show all four columns so investors see the range.
+    """
     yc = KENYA_YIELD_CURVE
-    gbp = yc["gbp_equivalent"]
+    spot = p["kes_gbp_initial_spot"]
 
-    # Tranche expected GBP IRR from existing MC (approximate from preset params)
-    # Class A: short duration, high certainty, but principal at crash rate → poor IRR
-    # Class B: medium, Class C: long
-    # These will be filled properly by MC results at runtime; we pre-compute benchmarks here
-    benchmarks = [
-        {"name": "UK Gilt 10yr", "yield_pct": gbp["uk_gilt_10yr"], "risk": "AAA sovereign", "color": "#3fb950"},
-        {"name": "UK HY Corporate 10yr", "yield_pct": gbp["uk_hy_corp_10yr"], "risk": "BB rated credit", "color": "#58a6ff"},
-        {"name": "KES 10yr Bond (GBP equiv.)", "yield_pct": gbp["10yr_kes_bond_gbp_equiv"], "risk": "EM sovereign + FX", "color": "#ffa657"},
-        {"name": "Kenya Eurobond (GBP equiv.)", "yield_pct": gbp["10yr_eurobond_gbp_equiv"], "risk": "EM USD sovereign", "color": "#bc8cff"},
-        {"name": "UK Buy-to-Let gross yield", "yield_pct": 5.8, "risk": "UK residential property", "color": "#d29922"},
-        {"name": "UK CPI inflation (2026)", "yield_pct": 3.1, "risk": "Real return floor", "color": "#8b949e"},
+    # ── Compute expected annual depreciation scenarios from model params ───
+    gbm_drift = p["gbm_annual_drift"]                          # e.g. 0.05
+    jump_rate = p["devaluation_jump_prob_annual"]              # e.g. 0.35
+    jump_mean = p["jump_severity_mean"]                        # e.g. 0.35
+    # Expected full-model annual depreciation (compound approximation)
+    # E[annual rate] ≈ (1 + gbm_drift) × (1 + jump_rate × jump_mean) - 1
+    expected_full_depr = (1 + gbm_drift) * (1 + jump_rate * jump_mean) - 1
+
+    # Class A: 25% depreciation over median 20 months → annualised
+    class_a_drop = p["class_a"]["trigger_drop"]               # 0.25
+    class_a_months = 20
+    class_a_annual_depr = (1 + class_a_drop) ** (12 / class_a_months) - 1
+
+    # Class C: 75% depreciation over median 40 months → annualised
+    class_c_drop = p["class_c"]["trigger_drop"]               # 0.75
+    class_c_months = 40
+    class_c_annual_depr = (1 + class_c_drop) ** (12 / class_c_months) - 1
+
+    depr_scenarios = [
+        {"key": "optimistic",  "label": "Optimistic (GBM drift only, no jumps)",
+         "annual_depr_pct": round(gbm_drift * 100, 1),        "annual_depr": gbm_drift},
+        {"key": "expected",   "label": "Expected (GBM + mean jump component)",
+         "annual_depr_pct": round(expected_full_depr * 100, 1), "annual_depr": expected_full_depr},
+        {"key": "class_a_path", "label": f"Class A path (25% over 20mo, {round(class_a_annual_depr*100,1)}%/yr ann.)",
+         "annual_depr_pct": round(class_a_annual_depr * 100, 1), "annual_depr": class_a_annual_depr},
+        {"key": "class_c_path", "label": f"Class C path (75% over 40mo, {round(class_c_annual_depr*100,1)}%/yr ann.)",
+         "annual_depr_pct": round(class_c_annual_depr * 100, 1), "annual_depr": class_c_annual_depr},
     ]
 
+    def _gbp_equiv(kes_yield_pct: float, annual_depr: float) -> float:
+        """GBP-equivalent annual return: (1+y)/(1+d) - 1, expressed as % rounded to 1dp."""
+        return round(((1 + kes_yield_pct / 100) / (1 + annual_depr) - 1) * 100, 1)
+
+    # ── Build GBP-adjusted curve for each tenor × scenario ─────────────────
     domestic = yc["domestic_kes"]
-    curve_points = [
-        {"tenor": "91d T-bill", "yield_pct": domestic["91d_tbill"]},
-        {"tenor": "182d T-bill", "yield_pct": domestic["182d_tbill"]},
-        {"tenor": "364d T-bill", "yield_pct": domestic["364d_tbill"]},
-        {"tenor": "2yr Bond", "yield_pct": domestic["2yr_bond"]},
-        {"tenor": "5yr Bond", "yield_pct": domestic["5yr_bond"]},
-        {"tenor": "10yr Bond", "yield_pct": domestic["10yr_bond"]},
-        {"tenor": "15yr Bond", "yield_pct": domestic["15yr_bond"]},
+    curve_tenors = [
+        {"tenor": "91d T-bill",   "kes_yield": domestic["91d_tbill"],   "years": 0.25},
+        {"tenor": "182d T-bill",  "kes_yield": domestic["182d_tbill"],  "years": 0.5},
+        {"tenor": "364d T-bill",  "kes_yield": domestic["364d_tbill"],  "years": 1.0},
+        {"tenor": "2yr Bond",     "kes_yield": domestic["2yr_bond"],    "years": 2.0},
+        {"tenor": "5yr Bond",     "kes_yield": domestic["5yr_bond"],    "years": 5.0},
+        {"tenor": "10yr Bond",    "kes_yield": domestic["10yr_bond"],   "years": 10.0},
+        {"tenor": "15yr Bond",    "kes_yield": domestic["15yr_bond"],   "years": 15.0},
+    ]
+    for ct in curve_tenors:
+        ct["gbp_equiv_by_scenario"] = {
+            sc["key"]: _gbp_equiv(ct["kes_yield"], sc["annual_depr"])
+            for sc in depr_scenarios
+        }
+
+    # ── Compute 10yr KES bond GBP equiv properly (compound, not linear) ────
+    # Compound formula over N years: GBP IRR = ((1+y)^N * S0/S_N)^(1/N) - 1
+    # where S_N = S0 * (1+depr)^N
+    # Simplifies to: (1+y)/(1+depr) - 1  (same per-period formula)
+    kes_10yr_yield = domestic["10yr_bond"] / 100
+    gbp_10yr_by_scenario = {}
+    for sc in depr_scenarios:
+        d = sc["annual_depr"]
+        gbp_irr = round(((1 + kes_10yr_yield) / (1 + d) - 1) * 100, 1)
+        gbp_10yr_by_scenario[sc["key"]] = {
+            "gbp_equiv_pct": gbp_irr,
+            "kes_yield_pct": domestic["10yr_bond"],
+            "annual_depr_pct": sc["annual_depr_pct"],
+            "label": sc["label"],
+        }
+
+    # ── Eurobond in GBP: USD yield + GBP/USD basis adjustment (~-0.5%) ─────
+    gbp_usd_basis = -0.5  # GBP/USD cross-currency basis swap (typical)
+    eurobond_usd = yc["eurobond_usd"]
+    eurobond_gbp_points = [
+        {"name": k, "usd_yield": v, "gbp_equiv_pct": round(v + gbp_usd_basis, 1)}
+        for k, v in eurobond_usd.items() if v is not None
     ]
 
-    eurobond = yc["eurobond_usd"]
-    eurobond_points = [
-        {"name": k, "yield_pct": v} for k, v in eurobond.items() if v is not None
+    # ── Fixed GBP reference yields (not KES-denominated, no FX adjustment) ─
+    uk_benchmarks = [
+        {"name": "UK Gilt 10yr",           "yield_pct": 4.2,  "risk": "AAA sovereign",           "color": "#3fb950"},
+        {"name": "UK HY Corporate 10yr",   "yield_pct": 7.8,  "risk": "BB rated credit",          "color": "#58a6ff"},
+        {"name": "UK Buy-to-Let gross",    "yield_pct": 5.8,  "risk": "UK residential property",  "color": "#d29922"},
+        {"name": "UK CPI inflation (2026)","yield_pct": 3.1,  "risk": "Real return floor",         "color": "#8b949e"},
     ]
+
+    # ── SPV tranche trigger context (dynamic from params) ──────────────────
+    tranche_context = []
+    for cls_key, label in [("class_a", "Class A"), ("class_b", "Class B"), ("class_c", "Class C")]:
+        drop = p[cls_key]["trigger_drop"]
+        sweetener = p[cls_key]["sweetener_share"]
+        fee = p[cls_key]["fee_pct"]
+        trigger_rate = round(spot * (1 + drop))
+        tranche_context.append({
+            "label": label,
+            "trigger_drop_pct": round(drop * 100),
+            "trigger_rate_kes": trigger_rate,
+            "sweetener_pct": round(sweetener * 100),
+            "fee_pct": round(fee * 100),
+            "note": (
+                f"{label}: fires at {trigger_rate} KES/GBP ({round(drop*100)}% drop). "
+                f"Investor receives principal + {round(fee*100)}% fee + {round(sweetener*100)}% "
+                f"of FX profit on that tranche."
+            ),
+        })
+
+    # ── Commentary: correct the record on KES yield illusion ───────────────
+    opt_10yr = gbp_10yr_by_scenario["optimistic"]["gbp_equiv_pct"]
+    exp_10yr = gbp_10yr_by_scenario["expected"]["gbp_equiv_pct"]
+    c_path_10yr = gbp_10yr_by_scenario["class_c_path"]["gbp_equiv_pct"]
+    commentary = (
+        f"YIELD ILLUSION WARNING: Kenya's 10yr bond yields {domestic['10yr_bond']}% in KES terms — "
+        f"which looks attractive vs 4.2% UK gilts. But GBP-equivalent returns depend entirely "
+        f"on the depreciation path. Under GBM drift only ({gbm_drift*100:.0f}%/yr): {opt_10yr}% GBP equiv. "
+        f"Under the EXPECTED full model ({round(expected_full_depr*100,1)}%/yr including jump component): "
+        f"{exp_10yr}% GBP equiv. Under the Class C crisis path ({round(class_c_annual_depr*100,1)}%/yr ann.): "
+        f"{c_path_10yr}% GBP equiv. "
+        f"Even the optimistic scenario barely beats a UK HY corporate bond (7.8%). "
+        f"The SPV structure crystallises the FX gain at trigger rather than relying on a "
+        f"KES bond to preserve GBP value through a depreciation cycle."
+    )
 
     return {
         "as_of": yc["as_of"],
         "source": yc["source"],
-        "benchmarks": benchmarks,
-        "kenya_yield_curve": curve_points,
-        "eurobond_curve": eurobond_points,
-        "gbp_equivalents": [
-            {"label": "KES 10yr (GBP equiv.)", "yield_pct": gbp["10yr_kes_bond_gbp_equiv"],
-             "note": "18.2% KES yield minus 5%/yr expected FX depreciation"},
-            {"label": "Eurobond (GBP equiv.)", "yield_pct": gbp["10yr_eurobond_gbp_equiv"],
-             "note": "USD yield adjusted for GBP/USD basis"},
-            {"label": "UK Gilt 10yr", "yield_pct": gbp["uk_gilt_10yr"], "note": "Risk-free benchmark"},
-        ],
-        "commentary": yc["commentary"],
+        "depreciation_scenarios": depr_scenarios,
+        "kenya_yield_curve": curve_tenors,           # includes gbp_equiv_by_scenario per tenor
+        "gbp_10yr_by_scenario": gbp_10yr_by_scenario,
+        "eurobond_curve": eurobond_gbp_points,
+        "uk_benchmarks": uk_benchmarks,
+        "tranche_context": tranche_context,
+        "commentary": commentary,
         "breakeven_analysis": {
             "description": (
-                "Class A (25% drop) fires at 208 KES/GBP — near-certain under baseline GBM drift alone. "
-                "Class B (45% drop) fires at 242 KES/GBP — consistent with Zambia 2015 precedent. "
-                "Class C (75% drop) fires at 292 KES/GBP — requires Ghana/Turkey-level crisis; "
-                "P(trigger) ~55-65% under calibrated model. "
-                "Crucially: a 16% KES CBK bond is worth only £{:.0f} in GBP terms by year 10 "
-                "under the 75% scenario (vs £{:.0f} initial), making Class C the highest-conviction "
-                "hedge for investors who believe Kenya follows the Ghana path.".format(
-                    round(5_000_000 * (1.16 ** 10) / (166.6 * 1.75)),
-                    round(5_000_000 / 166.6)
-                )
+                f"Class A fires at {round(spot*(1+p['class_a']['trigger_drop']))} KES/GBP "
+                f"({round(p['class_a']['trigger_drop']*100)}% drop). "
+                f"Class B at {round(spot*(1+p['class_b']['trigger_drop']))} KES/GBP "
+                f"({round(p['class_b']['trigger_drop']*100)}% drop). "
+                f"Class C at {round(spot*(1+p['class_c']['trigger_drop']))} KES/GBP "
+                f"({round(p['class_c']['trigger_drop']*100)}% drop — Ghana/Turkey-level crisis)."
             ),
-            "class_a_trigger_rate": round(166.6 * 1.25),
-            "class_b_trigger_rate": round(166.6 * 1.45),
-            "class_c_trigger_rate": round(166.6 * 1.75),
-            "class_b_breakeven_rate": round(166.6 * 1.45),
-            "class_c_breakeven_rate": round(166.6 * 1.75),
+            "class_a_trigger_rate": round(spot * (1 + p["class_a"]["trigger_drop"])),
+            "class_b_trigger_rate": round(spot * (1 + p["class_b"]["trigger_drop"])),
+            "class_c_trigger_rate": round(spot * (1 + p["class_c"]["trigger_drop"])),
+            "expected_annual_depr_pct": round(expected_full_depr * 100, 1),
+            "gbm_drift_only_depr_pct": round(gbm_drift * 100, 1),
         },
     }
 

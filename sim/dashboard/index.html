@@ -11,7 +11,7 @@
   No fetch(), no CORS — works on file://, GitHub Pages, any static host.
   To regenerate data:  cd sim && docker compose run --rm engine
 -->
-<script src="./data/bundle.js?v=11" onerror="window.__BUNDLE_MISSING=true"></script>
+<script src="./data/bundle.js?v=12" onerror="window.__BUNDLE_MISSING=true"></script>
 <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
 <style>
 :root{
@@ -302,9 +302,9 @@ tr:hover td{background:var(--s2)}
   <p style="color:#8b949e;max-width:700px">Kenya domestic yield curve vs UK comparators. SPV tranches must deliver superior GBP-equivalent returns to justify EM currency risk.</p>
   <div id="yield-commentary" style="color:#8b949e;margin:10px 0 20px;max-width:760px;font-size:13px"></div>
   <div class="chart-grid">
-    <div class="chart-box" style="grid-column:span 2"><h3>GBP-Equivalent Yield Comparison</h3><div id="ch-yield-compare" style="height:320px"></div></div>
-    <div class="chart-box"><h3>Kenya Domestic Yield Curve (KES)</h3><div id="ch-yield-curve" style="height:280px"></div></div>
-    <div class="chart-box"><h3>Trigger Breakeven Rates</h3><div id="ch-yield-breakeven" style="height:280px"></div></div>
+    <div class="chart-box" style="grid-column:span 2"><h3>KES Yield Curve vs GBP-Equivalent Under Each Depreciation Scenario</h3><div id="ch-yield-curve" style="height:340px"></div></div>
+    <div class="chart-box" style="grid-column:span 2"><h3>10yr KES Bond GBP-Equivalent Return vs UK Benchmarks (bars = KES bond, lines = UK comparators)</h3><div id="ch-yield-compare" style="height:320px"></div></div>
+    <div class="chart-box" style="grid-column:span 2"><h3>SPV Trigger Rates vs Current KES/GBP Spot</h3><div id="ch-yield-breakeven" style="height:260px"></div></div>
   </div>
 </div>
 
@@ -795,27 +795,69 @@ function renderYieldBenchmarks(D){
   var yb=D.yield_benchmarks;
   if(!yb)return;
   document.getElementById("yield-commentary").textContent=yb.commentary||"";
-  var bm=yb.benchmarks||[];
-  Plotly.newPlot("ch-yield-compare",[{type:"bar",orientation:"h",
-    x:bm.map(function(b){return b.yield_pct;}),
-    y:bm.map(function(b){return b.name;}),
-    marker:{color:bm.map(function(b){return b.color;})},
-    text:bm.map(function(b){return b.yield_pct.toFixed(1)+"%";}),textposition:"auto",
-    customdata:bm.map(function(b){return b.risk;}),
-    hovertemplate:"%{y}: %{x}%<br>%{customdata}<extra></extra>"}],
-    PL({xaxis:{title:"Yield / GBP-equiv. IRR (%)"},showlegend:false,margin:{l:220,r:20,t:10,b:40}}),PC);
+
+  // ── Chart 1: KES raw yield curve + GBP-equivalent lines per scenario ──────
   var kc=yb.kenya_yield_curve||[];
-  Plotly.newPlot("ch-yield-curve",[{type:"scatter",mode:"lines+markers",
-    x:kc.map(function(p){return p.tenor;}),y:kc.map(function(p){return p.yield_pct;}),
-    line:{color:"#3fb950",width:2},marker:{size:6,color:"#3fb950"}}],
-    PL({yaxis:{title:"Yield (%)"},showlegend:false}),PC);
+  var scColors={"optimistic":"#3fb950","expected":"#ffa657","class_a_path":"#58a6ff","class_c_path":"#f85149"};
+  var kcTraces=[{
+    type:"bar",name:"KES Nominal Yield",
+    x:kc.map(function(t){return t.tenor;}),
+    y:kc.map(function(t){return t.kes_yield;}),
+    marker:{color:"rgba(88,166,255,0.25)"},yaxis:"y"
+  }];
+  var scLabels={"optimistic":"GBP equiv: GBM drift only","expected":"GBP equiv: Expected full model",
+    "class_a_path":"GBP equiv: Class A path","class_c_path":"GBP equiv: Class C path"};
+  (yb.depreciation_scenarios||[]).forEach(function(sc){
+    kcTraces.push({
+      type:"scatter",mode:"lines+markers",name:scLabels[sc.key]||sc.label,
+      x:kc.map(function(t){return t.tenor;}),
+      y:kc.map(function(t){return(t.gbp_equiv_by_scenario||{})[sc.key]||0;}),
+      line:{color:scColors[sc.key]||"#8b949e",width:2},
+      marker:{size:5},yaxis:"y"
+    });
+  });
+  // UK gilt reference
+  kcTraces.push({type:"scatter",mode:"lines",name:"UK Gilt 10yr (4.2%)",
+    x:[kc[0]&&kc[0].tenor,kc[kc.length-1]&&kc[kc.length-1].tenor],y:[4.2,4.2],
+    line:{color:"#3fb950",width:1,dash:"dash"},yaxis:"y"});
+  Plotly.newPlot("ch-yield-curve",kcTraces,
+    PL({barmode:"overlay",yaxis:{title:"Annual Return (%)"},showlegend:true,
+      shapes:[{type:"line",x0:-0.5,x1:kc.length-0.5,y0:0,y1:0,line:{color:"#f85149",width:1}}]}),PC);
+
+  // ── Chart 2: 10yr KES bond GBP-equiv grouped by scenario + UK benchmarks ──
+  var g10=yb.gbp_10yr_by_scenario||{};
+  var scOrder=["optimistic","expected","class_a_path","class_c_path"];
+  var scenarioLabels=scOrder.map(function(k){return(g10[k]||{}).annual_depr_pct||0;});
+  var ukBm=yb.uk_benchmarks||[];
+  var compareTraces=[{
+    type:"bar",name:"10yr KES Bond (GBP equiv.)",
+    x:scOrder.map(function(k){return(g10[k]||{}).annual_depr_pct+"% depr/yr";}),
+    y:scOrder.map(function(k){return(g10[k]||{}).gbp_equiv_pct||0;}),
+    marker:{color:scOrder.map(function(k){return scColors[k]||"#8b949e";})},
+    text:scOrder.map(function(k){return((g10[k]||{}).gbp_equiv_pct||0)+"%";}),textposition:"outside"
+  }];
+  ukBm.forEach(function(b){
+    compareTraces.push({type:"scatter",mode:"lines",name:b.name+" "+b.yield_pct+"%",
+      x:[scOrder[0]+"% depr/yr","0% depr/yr"],
+      y:[b.yield_pct,b.yield_pct],
+      line:{color:b.color,width:1.5,dash:"dot"}});
+  });
+  Plotly.newPlot("ch-yield-compare",compareTraces,
+    PL({xaxis:{title:"Assumed annual KES depreciation"},yaxis:{title:"Annual GBP return (%)"},
+      barmode:"group",showlegend:true,
+      shapes:[{type:"line",x0:-0.5,x1:scOrder.length-0.5,y0:0,y1:0,line:{color:"#f85149",width:1,dash:"dash"}}]}),PC);
+
+  // ── Chart 3: SPV trigger rates vs current spot ─────────────────────────────
   var be=yb.breakeven_analysis||{},p=D.params||{},spot=p.kes_gbp_initial_spot||166.6;
+  var tc=yb.tranche_context||[];
   Plotly.newPlot("ch-yield-breakeven",[{type:"bar",
-    x:["Current Spot","Class B Breakeven","Class C Breakeven"],
-    y:[spot,be.class_b_breakeven_rate||0,be.class_c_breakeven_rate||0],
-    marker:{color:["#3fb950","#58a6ff","#bc8cff"]},
-    text:[spot+"",(be.class_b_breakeven_rate||"?")+"",(be.class_c_breakeven_rate||"?")+""],
-    textposition:"auto"}],
+    x:["Spot"].concat(tc.map(function(t){return t.label+" "+t.trigger_drop_pct+"%";})),
+    y:[spot].concat(tc.map(function(t){return t.trigger_rate_kes;})),
+    marker:{color:["#3fb950","#ffa657","#58a6ff","#bc8cff"]},
+    text:[spot+""].concat(tc.map(function(t){return t.trigger_rate_kes+"";})),
+    textposition:"outside",
+    customdata:["Current KES/GBP rate"].concat(tc.map(function(t){return t.note;})),
+    hovertemplate:"%{customdata}<extra></extra>"}],
     PL({yaxis:{title:"KES/GBP Rate"},showlegend:false}),PC);
 }
 
